@@ -219,10 +219,6 @@ function EditBudgetModal({
   // State for visibility checkboxes
   const [visible, setVisible] = useState<Set<number>>(() => new Set(visibleCategories))
 
-  useEffect(() => {
-    setVisible(new Set(visibleCategories))
-  }, [visibleCategories])
-
   const toggleVisible = (catId: number) => {
     setVisible(prev => {
       const next = new Set(prev)
