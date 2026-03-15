@@ -1,4 +1,4 @@
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { useQuery, useInfiniteQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { accountsApi, balancesApi, transactionsApi, categoriesApi, budgetsApi, reportsApi, importsApi, institutionsApi, demoApi, authApi, type TransactionFilters } from '@/lib/services'
 import { getToken } from '@/lib/api'
 import type { AccountCreate, AccountUpdate, BudgetCreate, BudgetUpdate, TransactionUpdate, TransactionCreate, CategoryCreate, CSVColumnMapping, BalanceSnapshotUpdate } from '@/types'
@@ -135,9 +135,15 @@ export function useDeleteAccount() {
 // ─── Transactions ─────────────────────────────────────────────────────────────
 
 export function useTransactions(filters?: TransactionFilters) {
-  return useQuery({
-    queryKey: QK.transactions(filters),
-    queryFn: () => transactionsApi.list(filters),
+  const { offset: _offset, ...baseFilters } = filters ?? {}
+  const limit = baseFilters.limit ?? 500
+
+  return useInfiniteQuery({
+    queryKey: QK.transactions(baseFilters),
+    initialPageParam: 0,
+    queryFn: ({ pageParam }) => transactionsApi.list({ ...baseFilters, limit, offset: pageParam }),
+    getNextPageParam: (lastPage, _allPages, lastPageParam) =>
+      lastPage.length < limit ? undefined : (lastPageParam + limit),
   })
 }
 

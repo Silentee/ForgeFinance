@@ -320,7 +320,7 @@ export default function Sidebar() {
           </div>
         )}
         <div className="px-5 py-4 flex items-center justify-between">
-          <p className="text-2xs text-ink-300 font-mono">v1.0 · piserver</p>
+          <p className="text-2xs text-ink-300 font-mono">v1.0 · self-hosted</p>
           <button
             onClick={() => setShowSettings(s => !s)}
             className={clsx(

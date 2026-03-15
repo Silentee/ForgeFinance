@@ -612,7 +612,12 @@ export default function TransactionsPage() {
     date_to: dateRange?.to,
   }
 
-  const { data: transactions, isLoading } = useTransactions(queryFilters)
+  const txQuery = useTransactions(queryFilters)
+  const transactions = useMemo(
+    () => txQuery.data?.pages.flat() ?? undefined,
+    [txQuery.data]
+  )
+  const isLoading = txQuery.isLoading
   const { data: accounts } = useAccounts()
   const { data: categories } = useCategories({ flat: true })
   const todayStr = new Date().toISOString().slice(0, 10)
@@ -722,6 +727,25 @@ export default function TransactionsPage() {
 
     return groups
   }, [filteredTransactions])
+
+  const loadMoreSentinelRef = useRef<HTMLDivElement | null>(null)
+  useEffect(() => {
+    const el = loadMoreSentinelRef.current
+    if (!el) return
+    if (!txQuery.hasNextPage) return
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (!entries[0]?.isIntersecting) return
+        if (txQuery.isFetchingNextPage) return
+        txQuery.fetchNextPage()
+      },
+      { rootMargin: '400px' }
+    )
+
+    observer.observe(el)
+    return () => observer.disconnect()
+  }, [txQuery.hasNextPage, txQuery.isFetchingNextPage, txQuery.fetchNextPage])
 
   const clearFilters = () => {
     setDatePreset('last3Months')
@@ -1099,21 +1123,35 @@ export default function TransactionsPage() {
           <span className="label">Transactions</span>
         </div>
 
-        {isLoading ? (
-          <div className="flex justify-center py-12">
-            <Spinner size="lg" />
-          </div>
-        ) : !filteredTransactions?.length ? (
-          <div className="p-5">
-            <EmptyState
-              title="No transactions found"
-              description="Try adjusting your filters or date range."
-            />
-          </div>
-        ) : (
-          <div>
-            {transactionsByMonth.map((group, groupIdx) => (
-              <div key={group.month}>
+          {isLoading ? (
+            <div className="flex justify-center py-12">
+              <Spinner size="lg" />
+            </div>
+          ) : !filteredTransactions?.length ? (
+            <div className="p-5">
+              <EmptyState
+                title="No transactions found"
+                description={txQuery.hasNextPage
+                  ? "No matches in the loaded results yet. Load more to search further back."
+                  : "Try adjusting your filters or date range."
+                }
+              />
+              {txQuery.hasNextPage && (
+                <div className="mt-4 flex justify-center">
+                  <Button
+                    variant="ghost"
+                    onClick={() => txQuery.fetchNextPage()}
+                    loading={txQuery.isFetchingNextPage}
+                  >
+                    Load more
+                  </Button>
+                </div>
+              )}
+            </div>
+          ) : (
+            <div>
+              {transactionsByMonth.map((group, groupIdx) => (
+                <div key={group.month}>
                 {/* Month header */}
                 <div className={clsx(
                   'sticky top-[var(--page-header-height,0px)] z-10 flex items-center justify-between px-5 py-2 bg-surface-800 border-b border-white/[0.06]',
@@ -1198,13 +1236,28 @@ export default function TransactionsPage() {
                         </div>
                       </div>
                     </div>
-                  ))}
+                    ))}
+                  </div>
                 </div>
+              ))}
+
+              <div className="px-5 py-4 border-t border-white/[0.06] flex items-center justify-center">
+                {txQuery.hasNextPage ? (
+                  <Button
+                    variant="ghost"
+                    onClick={() => txQuery.fetchNextPage()}
+                    loading={txQuery.isFetchingNextPage}
+                  >
+                    Load more
+                  </Button>
+                ) : (
+                  <span className="text-xs text-ink-500">End of results</span>
+                )}
               </div>
-            ))}
-          </div>
-        )}
-      </Card>
+              <div ref={loadMoreSentinelRef} className="h-px" />
+            </div>
+          )}
+        </Card>
 
       {showAdd && accounts && categories && (
         <AddTransactionModal
