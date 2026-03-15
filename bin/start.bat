@@ -45,7 +45,8 @@ if errorlevel 1 (
 
 REM ---- Backend - launch in a new titled terminal window ----
 echo Starting backend in a new window...
-start "Forge Finance - Backend" cmd /k "cd /d \"%ROOT_DIR%\backend\" && start.bat"
+REM Note: cmd.exe escaping uses doubled quotes inside a quoted /k argument.
+start "Forge Finance - Backend" cmd /k "cd /d ""%ROOT_DIR%\backend"" && start.bat"
 
 REM Give the backend a few seconds to come up before the frontend proxy hits it.
 timeout /t 3 /nobreak >nul
