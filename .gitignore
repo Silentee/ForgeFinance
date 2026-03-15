@@ -1,6 +1,7 @@
 .vscode
 flat/
 examples/
+backups/
 app*.db
 *.backup
 *.xlsx
