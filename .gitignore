@@ -2,4 +2,5 @@
 flat/
 examples/
 app*.db
+*.backup
 *.xlsx
