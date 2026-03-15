@@ -13,7 +13,7 @@ Forge Finance is a personal finance tracking application that runs entirely on l
 **Full Stack:**
 ```bash
 cd .
-start.bat       # Windows Only
+.\bin\start.bat  # Windows Only
 ```
 
 **Backend:**

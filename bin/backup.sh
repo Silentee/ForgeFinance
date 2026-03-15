@@ -2,7 +2,8 @@
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-BACKUP_DIR="$SCRIPT_DIR/backups"
+ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+BACKUP_DIR="$ROOT_DIR/backups"
 TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
 BACKUP_FILE="$BACKUP_DIR/app_$TIMESTAMP.db"
 
@@ -15,3 +16,4 @@ docker run --rm \
   alpine cp /data/app.db "/backup/app_$TIMESTAMP.db"
 
 echo "Backup saved to $BACKUP_FILE"
+

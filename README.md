@@ -46,7 +46,7 @@ The easiest way to run Forge Finance on Windows:
 1. Open a terminal in the project root directory
 2. Run:
    ```
-   start.bat
+   .\bin\start.bat
    ```
 
 This will:
@@ -456,7 +456,10 @@ ForgeFinance/
 │   ├── start.bat / start.sh   # Startup scripts
 │   └── package.json
 │
-└── start.bat                  # One-click launcher (Windows)
+├── bin/                       # Helper scripts
+│   ├── start.bat              # One-click launcher (Windows)
+│   ├── deploy.sh              # Deploy via Docker Compose
+│   └── backup.sh              # Backup DB from Docker volume
 ```
 
 ---
