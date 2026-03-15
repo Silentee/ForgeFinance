@@ -1,0 +1,28 @@
+{
+  "permissions": {
+    "allow": [
+      "mcp__ide__getDiagnostics",
+      "Bash(grep:*)",
+      "Bash(curl:*)",
+      "Bash(sqlite3 app_backup.db \".tables\")",
+      "Bash(sqlite3 app_backup.db \"SELECT id, name, institution_id, account_type, current_balance FROM accounts\")",
+      "Bash(sqlite3 app_backup.db \"SELECT DISTINCT is_transfer, category_id, description FROM transactions WHERE is_transfer = 1 LIMIT 20\")",
+      "Bash(sqlite3 app_backup.db \"PRAGMA table_info\\(accounts\\)\")",
+      "Bash(sqlite3 app_backup.db \".schema accounts\")",
+      "Bash(echo \"exit: $?\")",
+      "Bash(python -m app.db.init_db)",
+      "Bash(uv run python -m app.db.init_db)",
+      "Bash(sqlite3 app.db \"SELECT id, name, parent_id FROM categories ORDER BY parent_id, id\")",
+      "Bash(sqlite3 app.db \"SELECT description, is_transfer, category_id FROM transactions WHERE is_transfer = 1 LIMIT 5\")",
+      "Bash(uv run python -c \"from app.services.reporting import build_spending_trends; print\\(''import OK''\\)\")",
+      "Bash(uv run python -c \"from app.api.endpoints.reports import router; print\\(''import OK''\\)\")",
+      "Bash(uv run python -c \":*)",
+      "Bash(npx tsc --noEmit)",
+      "Bash(python3 -c \"import sys,json; d=json.load\\(sys.stdin\\); print\\(''months:'', d[''months'']\\); print\\(''labels:'', d[''month_labels'']\\); [print\\(f\"\" {s[''category_name'']}: {s[''monthly_totals'']}\"\"\\) for s in d[''series''] if not s[''is_income'']]\")",
+      "Bash(python3 -c \"import sys,json; d=json.load\\(sys.stdin\\); [print\\(f\"\"{s[''category_name'']}: {s[''monthly_totals'']}\"\"\\) for s in d[''series''] if not s[''is_income'']]\")",
+      "Bash(npx tsc --noEmit --pretty)",
+      "Bash(python -c \":*)",
+      "Bash(python -m json.tool)"
+    ]
+  }
+}

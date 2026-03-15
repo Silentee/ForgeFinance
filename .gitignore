@@ -1,0 +1,5 @@
+.vscode
+flat/
+examples/
+app*.db
+*.xlsx

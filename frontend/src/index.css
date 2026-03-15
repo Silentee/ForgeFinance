@@ -1,0 +1,138 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    color-scheme: dark;
+    --mobile-bar-height: 0px;
+  }
+
+  * {
+    box-sizing: border-box;
+  }
+
+  html {
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  body {
+    @apply bg-surface-950 text-ink-100 font-sans;
+    margin: 0;
+    min-height: 100vh;
+  }
+
+  /* iOS-safe full height: use dvh where supported */
+  @supports (height: 100dvh) {
+    body {
+      min-height: 100dvh;
+    }
+  }
+
+  /* Scrollbar styling */
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  ::-webkit-scrollbar-track {
+    @apply bg-surface-900;
+  }
+  ::-webkit-scrollbar-thumb {
+    @apply bg-surface-600 rounded-full;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    @apply bg-surface-500;
+  }
+
+  /* Selection */
+  ::selection {
+    @apply bg-amber-400/20 text-amber-400;
+  }
+
+  /* Hide number input spinners */
+  input[type="number"]::-webkit-outer-spin-button,
+  input[type="number"]::-webkit-inner-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+  }
+  input[type="number"] {
+    -moz-appearance: textfield;
+  }
+}
+
+@layer components {
+  /* Card — primary container surface */
+  .card {
+    @apply bg-surface-800 border border-white/[0.06] rounded-xl shadow-card;
+  }
+
+  /* Stat value — large monospaced number display */
+  .stat-value {
+    @apply font-mono text-2xl font-medium text-ink-100 tabular-nums;
+  }
+
+  /* Muted label */
+  .label {
+    @apply text-xs font-medium text-ink-300 uppercase tracking-widest;
+  }
+
+  /* Positive/negative value coloring */
+  .value-positive { @apply text-teal-400 font-mono tabular-nums; }
+  .value-negative { @apply text-rose-400 font-mono tabular-nums; }
+  .value-neutral  { @apply text-ink-100 font-mono tabular-nums; }
+  .value-amber    { @apply text-amber-400 font-mono tabular-nums; }
+
+  /* Subtle grid texture overlay */
+  .grid-bg {
+    background-image:
+      linear-gradient(rgba(255,255,255,0.025) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(255,255,255,0.025) 1px, transparent 1px);
+    background-size: 40px 40px;
+  }
+
+  /* Horizontal rule with grid aesthetic */
+  .rule {
+    @apply border-t border-white/[0.06];
+  }
+
+  /* Pill badge */
+  .badge {
+    @apply inline-flex items-center px-2 py-0.5 rounded text-2xs font-mono font-medium;
+  }
+  .badge-amber { @apply badge bg-amber-400/10 text-amber-400; }
+  .badge-teal  { @apply badge bg-teal-400/10 text-teal-400; }
+  .badge-rose  { @apply badge bg-rose-400/10 text-rose-400; }
+  .badge-ink   { @apply badge bg-white/5 text-ink-200; }
+  .badge-blue  { @apply badge bg-blue-400/10 text-blue-400; }
+}
+
+@layer components {
+  /* Mobile drawer slide-in animation */
+  .drawer-enter {
+    animation: slideInLeft 0.25s ease-out;
+  }
+
+  .drawer-backdrop {
+    animation: fadeIn 0.2s ease-out;
+  }
+
+  @keyframes slideInLeft {
+    from { transform: translateX(-100%); }
+    to   { transform: translateX(0); }
+  }
+}
+
+@layer utilities {
+  /* Staggered animation delays for list items */
+  .delay-75  { animation-delay: 75ms; }
+  .delay-100 { animation-delay: 100ms; }
+  .delay-150 { animation-delay: 150ms; }
+  .delay-200 { animation-delay: 200ms; }
+  .delay-300 { animation-delay: 300ms; }
+
+  /* Safe area padding for iOS notch/home indicator */
+  .safe-top    { padding-top: env(safe-area-inset-top, 0px); }
+  .safe-bottom { padding-bottom: env(safe-area-inset-bottom, 0px); }
+  .safe-left   { padding-left: env(safe-area-inset-left, 0px); }
+}

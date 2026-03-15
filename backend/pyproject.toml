@@ -1,0 +1,26 @@
+[project]
+name = "forge-finance"
+version = "1.0"
+description = "Personal finance tracking API"
+requires-python = ">=3.11"
+
+dependencies = [
+    "fastapi>=0.111.0",
+    "uvicorn[standard]>=0.29.0",
+    "sqlalchemy>=2.0.0",
+    "pydantic>=2.0.0",
+    "pydantic-settings>=2.0.0",
+    "pandas>=2.0.0",
+    "python-multipart>=0.0.9",   # file upload support in FastAPI
+    "alembic>=1.13.0",           # database migrations
+    "python-jose[cryptography]>=3.3.0",  # JWT auth
+    "bcrypt>=4.0.0",                     # password hashing
+    "httpx>=0.27.0",             # future Plaid API calls
+]
+
+[dependency-groups]
+dev = [
+    "httpx>=0.28.1",
+    "pytest>=9.0.2",
+    "pytest-asyncio>=1.3.0",
+]

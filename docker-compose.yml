@@ -1,0 +1,20 @@
+services:
+  backend:
+    build: ./backend
+    volumes:
+      - forge-data:/data
+    environment:
+      - DATABASE_URL=sqlite:////data/app.db
+      - CSV_UPLOAD_DIR=/data/uploads
+    restart: unless-stopped
+
+  frontend:
+    build: ./frontend
+    ports:
+      - "8080:80"
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+volumes:
+  forge-data:

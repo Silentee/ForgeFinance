@@ -1,0 +1,38 @@
+# Python bytecode files
+*.pyc
+__pycache__/
+
+
+# Distributions and packaging
+.Python
+build/
+dist/
+wheels/
+*.egg-info/
+
+
+# Environments
+.env
+.venv
+env/
+venv/
+# other common virtual env names
+
+
+# Editor/IDE-specific files
+.idea/  # Pycharm
+.vscode/ # VS Code (consider adding settings.json if it contains sensitive data)
+*.swp   # vim
+*.sublime-workspace # Sublime Text
+
+# OS-specific files
+.DS_Store # macOS
+.project  # Eclipse
+
+# Miscellaneous
+# Logs and databases
+*.log
+*.sqlite
+*.db
+# Secrets/Credentials (if not using a secure manager)
+# secrets.py or config.json (ensure these are handled securely)
