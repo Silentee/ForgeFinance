@@ -581,8 +581,9 @@ export default function TransactionsPage() {
     const from = sp.get('from')
     const to = sp.get('to')
     const excludeCf = sp.get('exclude_cf')
+    const account = sp.get('account')
 
-    const hasAny = Boolean(from || to || excludeCf)
+    const hasAny = Boolean(from || to || excludeCf || account)
     if (!hasAny) return
 
     if (from && to && /^\d{4}-\d{2}-\d{2}$/.test(from) && /^\d{4}-\d{2}-\d{2}$/.test(to)) {
@@ -596,10 +597,15 @@ export default function TransactionsPage() {
       setExcludedCfCategoryKeys(keys)
     }
 
-    // When arriving from a report, reset other filters to avoid confusing combinations.
-    setAccountFilter({ mode: 'all', accountIds: [] })
+    // When arriving from a report or import, reset other filters to avoid confusing combinations.
     setCategoryFilter({ mode: 'all', categoryIds: [], includeUncategorized: false })
     setTagFilter({ mode: 'any', tags: [] })
+
+    if (account && /^\d+$/.test(account)) {
+      setAccountFilter({ mode: 'selected', accountIds: [parseInt(account, 10)] })
+    } else {
+      setAccountFilter({ mode: 'all', accountIds: [] })
+    }
   }, [location.search])
   // Calculate date range based on preset or custom dates
   const dateRange = datePreset === 'custom'

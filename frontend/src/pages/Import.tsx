@@ -1,4 +1,5 @@
 import { useState, useCallback, useEffect } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { useDropzone } from 'react-dropzone'
 import { useAccounts, useImports, useUploadCsv, useDeleteImport, useImportBalanceCsv } from '@/hooks'
 import { importsApi } from '@/lib/services'
@@ -614,6 +615,7 @@ const FORMAT_EXAMPLES: Record<string, FormatExample> = {
 type ImportMode = 'transactions' | 'balance_history'
 
 export default function ImportPage() {
+  const navigate = useNavigate()
   const { data: accounts } = useAccounts()
   const { data: imports, isLoading: importsLoading } = useImports()
   const { data: presets } = useQuery({ queryKey: ['import-presets'], queryFn: importsApi.getPresets })
@@ -923,6 +925,19 @@ export default function ImportPage() {
                 <p className="text-xs text-ink-300 mb-3">
                   Date range: {formatDate(result.date_range_start)} → {formatDate(result.date_range_end ?? '')}
                 </p>
+              )}
+
+              {result.is_successful && result.transactions_imported > 0 && result.date_range_start && result.date_range_end && (
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  className="mb-3 w-full"
+                  onClick={() => navigate(
+                    `/transactions?from=${result.date_range_start}&to=${result.date_range_end}&account=${result.account_id}`
+                  )}
+                >
+                  View Imported Transactions
+                </Button>
               )}
 
               {result.errors.length > 0 && (

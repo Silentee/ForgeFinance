@@ -634,7 +634,7 @@ function AccountRow({
           {!account.is_active && <span className="badge badge-ink">inactive</span>}
         </div>
         {account.balance_updated_at && (
-          <p className="text-2xs text-ink-400 mt-0.5 ml-5">Updated {formatDate(account.balance_updated_at)}</p>
+          <p className="text-2xs text-ink-300 mt-0.5 ml-5">Updated {formatDate(account.balance_updated_at)}</p>
         )}
       </div>
       <div className="text-right" onClick={e => e.stopPropagation()}>
