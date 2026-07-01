@@ -1,4 +1,5 @@
 import { apiClient, setToken } from './api'
+import { todayLocal } from './format'
 import type {
   Account, AccountCreate, AccountUpdate, NetWorthSummary,
   Institution, InstitutionCreate,
@@ -247,11 +248,11 @@ function _downloadCsv(blob: Blob, filename: string) {
 export const exportApi = {
   transactions: () =>
     apiClient.get('/export/transactions', { responseType: 'blob' })
-      .then(r => _downloadCsv(r.data, `transactions_${new Date().toISOString().slice(0, 10)}.csv`)),
+      .then(r => _downloadCsv(r.data, `transactions_${todayLocal()}.csv`)),
 
   balances: () =>
     apiClient.get('/export/balances', { responseType: 'blob' })
-      .then(r => _downloadCsv(r.data, `balance_history_${new Date().toISOString().slice(0, 10)}.csv`)),
+      .then(r => _downloadCsv(r.data, `balance_history_${todayLocal()}.csv`)),
 }
 
 // ─── Demo ────────────────────────────────────────────────────────────────────

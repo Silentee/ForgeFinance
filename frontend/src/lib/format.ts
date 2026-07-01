@@ -149,3 +149,20 @@ export function currentYearMonth(): { year: number; month: number } {
   const now = new Date()
   return { year: now.getFullYear(), month: now.getMonth() + 1 }
 }
+
+/**
+ * Format a Date as a YYYY-MM-DD string using its LOCAL calendar date.
+ * Unlike `Date.toISOString().slice(0, 10)`, this does not shift across the
+ * UTC boundary — so an evening date stays on the correct day.
+ */
+export function toLocalDateString(d: Date): string {
+  const y = d.getFullYear()
+  const m = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  return `${y}-${m}-${day}`
+}
+
+/** Today's date as a local YYYY-MM-DD string. */
+export function todayLocal(): string {
+  return toLocalDateString(new Date())
+}

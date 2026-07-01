@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useAccounts, useDeleteAccount, useCreateAccount, useUpdateAccount, useUpdateBalance, useBalanceHistory, useUpdateBalanceSnapshot, useDeleteBalanceSnapshot } from '@/hooks'
 import { Card, PageHeader, Button, AccountTypeDot, EmptyState, Spinner, Modal } from '@/components/ui'
-import { formatCurrency, formatCurrencyWhole, formatDate, formatAccountType } from '@/lib/format'
+import { formatCurrency, formatCurrencyWhole, formatDate, formatAccountType, todayLocal } from '@/lib/format'
 import { importsApi } from '@/lib/services'
 import type { Account, AccountCreate, AccountUpdate, AccountType } from '@/types'
 import { useQuery } from '@tanstack/react-query'
@@ -244,7 +244,7 @@ function AccountDetailModal({
 
   // Add new entry state
   const [showAddEntry, setShowAddEntry] = useState(false)
-  const [newEntryDate, setNewEntryDate] = useState(() => new Date().toISOString().split('T')[0])
+  const [newEntryDate, setNewEntryDate] = useState(() => todayLocal())
   const [newEntryBalance, setNewEntryBalance] = useState('')
 
   const startEdit = (item: BalanceHistoryItem) => {
@@ -284,7 +284,7 @@ function AccountDetailModal({
     await addBalance.mutateAsync({ balance, date: newEntryDate })
     setShowAddEntry(false)
     setNewEntryBalance('')
-    setNewEntryDate(new Date().toISOString().split('T')[0])
+    setNewEntryDate(todayLocal())
   }
 
   return (
@@ -700,7 +700,7 @@ export default function AccountsPage() {
   const [linkedOnly, setLinkedOnly] = useState(false)
   const [showInactive, setShowInactive] = useState(false)
 
-  const todayStr = new Date().toISOString().slice(0, 10)
+  const todayStr = todayLocal()
   const [effectiveDate, setEffectiveDate] = useState(todayStr)
   const isCustomDate = effectiveDate !== todayStr
 

@@ -2,7 +2,7 @@ import { useState, useMemo, useEffect, useRef } from 'react'
 import { Link, useLocation } from 'react-router-dom'
 import { useTransactions, useAccounts, useCategories, useCreateTransaction, useUpdateTransaction, useDeleteTransaction } from '@/hooks'
 import { Card, PageHeader, Button, EmptyState, Spinner, Modal } from '@/components/ui'
-import { formatCurrency, formatDate } from '@/lib/format'
+import { formatCurrency, formatDate, toLocalDateString, todayLocal } from '@/lib/format'
 import type { Transaction, TransactionUpdate, TransactionCreate, TransactionType, Category } from '@/types'
 import clsx from 'clsx'
 
@@ -14,27 +14,27 @@ function getDateRange(preset: DateFilterPreset): { from: string; to: string } | 
   const month = today.getMonth()
   // For presets anchored to "now", extend to end of current month so
   // future-dated (pending) transactions within the month are always visible.
-  const endOfMonth = new Date(year, month + 1, 0).toISOString().slice(0, 10)
+  const endOfMonth = toLocalDateString(new Date(year, month + 1, 0))
 
   switch (preset) {
     case 'last3Months': {
       // Current month + previous three months, aligned to month boundaries.
       const from = new Date(year, month - 3, 1)
-      return { from: from.toISOString().slice(0, 10), to: endOfMonth }
+      return { from: toLocalDateString(from), to: endOfMonth }
     }
     case 'thisMonth': {
       const from = new Date(year, month, 1)
-      return { from: from.toISOString().slice(0, 10), to: endOfMonth }
+      return { from: toLocalDateString(from), to: endOfMonth }
     }
     case 'lastMonth': {
       const from = new Date(year, month - 1, 1)
       const to = new Date(year, month, 0) // Last day of previous month
-      return { from: from.toISOString().slice(0, 10), to: to.toISOString().slice(0, 10) }
+      return { from: toLocalDateString(from), to: toLocalDateString(to) }
     }
     case 'pastYear': {
       const from = new Date(today)
       from.setFullYear(from.getFullYear() - 1)
-      return { from: from.toISOString().slice(0, 10), to: endOfMonth }
+      return { from: toLocalDateString(from), to: endOfMonth }
     }
     case 'custom':
       return null
@@ -60,7 +60,7 @@ function formatShortDate(dateStr: string): string {
 
 function endOfCurrentMonth(): string {
   const today = new Date()
-  return new Date(today.getFullYear(), today.getMonth() + 1, 0).toISOString().slice(0, 10)
+  return toLocalDateString(new Date(today.getFullYear(), today.getMonth() + 1, 0))
 }
 
 function flattenCategories(cats: Category[]): Category[] {
@@ -432,7 +432,7 @@ function AddTransactionModal({ accounts, categories, onClose }: {
   onClose: () => void
 }) {
   const create = useCreateTransaction()
-  const today = new Date().toISOString().slice(0, 10)
+  const today = todayLocal()
   const [form, setForm] = useState<TransactionCreate>({
     account_id: accounts[0]?.id ?? 0,
     date: today,
@@ -626,7 +626,7 @@ export default function TransactionsPage() {
   const isLoading = txQuery.isLoading
   const { data: accounts } = useAccounts()
   const { data: categories } = useCategories({ flat: true })
-  const todayStr = new Date().toISOString().slice(0, 10)
+  const todayStr = todayLocal()
   const categoryNameById = useMemo(() => {
     const map = new Map<number, string>()
     for (const c of categories ?? []) map.set(c.id, c.name)
