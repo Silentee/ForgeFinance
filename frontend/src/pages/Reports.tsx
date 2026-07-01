@@ -1091,8 +1091,8 @@ export default function ReportsPage() {
             setCfCustomError('Select a start and end month.')
             return
           }
-          if (compareYearMonth(end, cfMaxAnchor) > 0) {
-            setCfCustomError(`End month must be ${yearMonthToInput(cfMaxAnchor)} or earlier.`)
+          if (compareYearMonth(end, now) > 0) {
+            setCfCustomError(`End month must be ${yearMonthToInput(now)} or earlier.`)
             return
           }
           if (compareYearMonth(start, end) > 0) {
@@ -1197,7 +1197,7 @@ export default function ReportsPage() {
                       <input
                         type="month"
                         value={cfCustomStart}
-                        max={yearMonthToInput(cfMaxAnchor)}
+                        max={yearMonthToInput(now)}
                         onChange={e => { const v = e.target.value; setCfCustomStart(v); applyCustomCfRange(v, cfCustomEnd) }}
                         className="bg-surface-800 border border-white/[0.06] rounded px-2 py-1 text-xs text-ink-200"
                       />
@@ -1207,7 +1207,7 @@ export default function ReportsPage() {
                       <input
                         type="month"
                         value={cfCustomEnd}
-                        max={yearMonthToInput(cfMaxAnchor)}
+                        max={yearMonthToInput(now)}
                         onChange={e => { const v = e.target.value; setCfCustomEnd(v); applyCustomCfRange(cfCustomStart, v) }}
                         className="bg-surface-800 border border-white/[0.06] rounded px-2 py-1 text-xs text-ink-200"
                       />
