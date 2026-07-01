@@ -783,6 +783,10 @@ export default function TransactionsPage() {
 
   useEffect(() => {
     if (accountFilter.mode !== 'selected') return
+    // Don't prune while transactions are still loading — accountsWithTransactions
+    // is empty during (re)fetch, which would wipe a valid selection (e.g. one set
+    // from URL params on arrival from the Import page).
+    if (!transactions) return
     if (accountFilter.accountIds.length === 0) {
       setAccountFilter({ mode: 'all', accountIds: [] })
       return
@@ -791,7 +795,7 @@ export default function TransactionsPage() {
     const nextIds = accountFilter.accountIds.filter(id => valid.has(id))
     if (nextIds.length === accountFilter.accountIds.length) return
     setAccountFilter(nextIds.length ? { mode: 'selected', accountIds: nextIds } : { mode: 'all', accountIds: [] })
-  }, [accountsWithTransactions, accountFilter])
+  }, [accountsWithTransactions, accountFilter, transactions])
 
   return (
     <div className="space-y-6 animate-slide-up">
