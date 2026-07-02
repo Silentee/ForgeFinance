@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
 import { useParams, Link } from 'react-router-dom'
 import { useNetWorthHistory, useSpendingTrends, useMonthlyTotals, useBudgetReport, useEquityHistory, useAccounts } from '@/hooks'
-import { Card, CardHeader, PageHeader, StatCard, Spinner } from '@/components/ui'
+import { Card, CardHeader, PageHeader, StatCard, Spinner, FilterDropdown, CheckboxRow } from '@/components/ui'
 import { formatCurrencyWhole, formatCurrencyCompact, formatCurrencySignedWhole, currentYearMonth, formatAccountType } from '@/lib/format'
 import type { AccountType, Account } from '@/types'
 import {
@@ -80,7 +80,6 @@ export default function ReportsPage() {
   const [equityAssetId, setEquityAssetId] = useState<number | null>(null)
   const [selectedSeries, setSelectedSeries] = useState<SeriesRef[]>([])
   const [seriesDisplay, setSeriesDisplay] = useState<'compare' | 'combined'>('compare')
-  const [seriesPickerOpen, setSeriesPickerOpen] = useState(false)
   const prevMonth = (() => {
     const d = new Date(now.year, now.month - 1, 1)
     d.setMonth(d.getMonth() - 1)
@@ -276,17 +275,20 @@ export default function ReportsPage() {
     accountIds: resolveSeriesAccountIds(ref),
     color: CHART_COLORS[i % CHART_COLORS.length],
   }))
+  // Selections can overlap (e.g. "All Checking" plus an individual checking account) — dedupe
+  // account IDs across all selected series so the combined total never double-counts an account.
+  const combinedAccountIds = new Set(resolvedSeries.flatMap(s => s.accountIds))
 
   // Per-month value for each series, net-worth-signed, aligned to the net worth timeline
   const seriesRowsRaw = (nwHistory?.data_points ?? []).map(p => {
     const row: Record<string, number | string> = { date: p.date.slice(0, 7) }
-    let combined = 0
     for (const s of resolvedSeries) {
       let v = 0
       for (const id of s.accountIds) v += signedBalance(accountMap.get(id), p.by_account[String(id)])
       row[s.key] = Math.round(v * 100) / 100
-      combined += v
     }
+    let combined = 0
+    for (const id of combinedAccountIds) combined += signedBalance(accountMap.get(id), p.by_account[String(id)])
     row.__combined = Math.round(combined * 100) / 100
     return row
   })
@@ -938,17 +940,67 @@ export default function ReportsPage() {
             })()}
           </Card>
 
-          {/* Series builder — pick individual accounts, type groups, or quick filters */}
+          {/* Series builder — tiered multi-select dropdown, same pattern as the Transactions category filter */}
           {nwMode === 'series' && (
             <Card padding={false}>
               <div className="p-4 space-y-3">
                 <div className="flex items-center justify-between gap-3 flex-wrap">
-                  <button
-                    onClick={() => setSeriesPickerOpen(o => !o)}
-                    className="px-3 py-1.5 rounded-lg text-sm font-semibold bg-surface-700 border border-white/[0.08] text-ink-100 hover:border-amber-400/40 transition-colors"
+                  <FilterDropdown
+                    disabled={!activeAccounts.length}
+                    isActive={selectedSeries.length > 0}
+                    buttonLabel={
+                      selectedSeries.length === 0 ? 'Select accounts or groups'
+                        : selectedSeries.length === 1 ? seriesLabel(selectedSeries[0])
+                          : `${selectedSeries.length} selected`
+                    }
                   >
-                    {seriesPickerOpen ? 'Done' : '+ Add accounts / groups'}
-                  </button>
+                    {(['liquid', 'assets', 'liabilities'] as const).map(f => {
+                      const ref: SeriesRef = { kind: 'filter', filter: f }
+                      return (
+                        <CheckboxRow
+                          key={f}
+                          checked={isSeriesSelected(ref)}
+                          label={FILTER_LABELS[f]}
+                          bold
+                          onToggle={() => toggleSeries(ref)}
+                        />
+                      )
+                    })}
+                    <div className="h-px bg-white/[0.06] my-1" />
+                    {presentTypes.map(t => {
+                      const groupRef: SeriesRef = { kind: 'group', accountType: t }
+                      const groupSelected = isSeriesSelected(groupRef)
+                      const typeAccounts = activeAccounts.filter(a => a.account_type === t)
+                      const selectedChildCount = typeAccounts.filter(a => isSeriesSelected({ kind: 'account', id: a.id })).length
+
+                      return (
+                        <div key={t} className="py-1">
+                          <CheckboxRow
+                            checked={groupSelected}
+                            indeterminate={!groupSelected && selectedChildCount > 0}
+                            label={`All ${formatAccountType(t)}`}
+                            sublabel={selectedChildCount > 0 ? `${selectedChildCount}/${typeAccounts.length} accounts selected` : undefined}
+                            bold
+                            onToggle={() => toggleSeries(groupRef)}
+                          />
+                          <div className="pl-6">
+                            {typeAccounts.map(a => {
+                              const accountRef: SeriesRef = { kind: 'account', id: a.id }
+                              return (
+                                <CheckboxRow
+                                  key={a.id}
+                                  checked={isSeriesSelected(accountRef)}
+                                  label={a.name}
+                                  onToggle={() => toggleSeries(accountRef)}
+                                />
+                              )
+                            })}
+                          </div>
+                        </div>
+                      )
+                    })}
+                  </FilterDropdown>
+
                   {selectedSeries.length >= 2 && (
                     <div className="flex rounded-lg bg-surface-700 border border-white/[0.08] p-0.5">
                       {(['compare', 'combined'] as const).map(mode => (
@@ -976,61 +1028,6 @@ export default function ReportsPage() {
                         <button onClick={() => toggleSeries(s.ref)} className="text-ink-400 hover:text-rose-400 px-1 leading-none" aria-label={`Remove ${s.label}`}>×</button>
                       </span>
                     ))}
-                  </div>
-                )}
-
-                {seriesPickerOpen && (
-                  <div className="space-y-4 pt-2 border-t border-white/[0.06]">
-                    <div>
-                      <div className="label mb-2">Groups</div>
-                      <div className="flex flex-wrap gap-2">
-                        {(['liquid', 'assets', 'liabilities'] as const).map(f => {
-                          const ref: SeriesRef = { kind: 'filter', filter: f }
-                          const on = isSeriesSelected(ref)
-                          return (
-                            <button key={f} onClick={() => toggleSeries(ref)}
-                              className={clsx('px-2.5 py-1 rounded-md text-xs font-medium border transition-colors',
-                                on ? 'bg-amber-400/10 border-amber-400/40 text-amber-400' : 'bg-surface-700 border-white/[0.08] text-ink-300 hover:text-ink-100')}>
-                              {FILTER_LABELS[f]}
-                            </button>
-                          )
-                        })}
-                        {presentTypes.map(t => {
-                          const ref: SeriesRef = { kind: 'group', accountType: t }
-                          const on = isSeriesSelected(ref)
-                          return (
-                            <button key={t} onClick={() => toggleSeries(ref)}
-                              className={clsx('px-2.5 py-1 rounded-md text-xs font-medium border transition-colors',
-                                on ? 'bg-amber-400/10 border-amber-400/40 text-amber-400' : 'bg-surface-700 border-white/[0.08] text-ink-300 hover:text-ink-100')}>
-                              All {formatAccountType(t)}
-                            </button>
-                          )
-                        })}
-                      </div>
-                    </div>
-                    <div>
-                      <div className="label mb-2">Accounts</div>
-                      <div className="space-y-3">
-                        {presentTypes.map(t => (
-                          <div key={t}>
-                            <div className="text-[11px] uppercase tracking-wide text-ink-400 mb-1">{formatAccountType(t)}</div>
-                            <div className="flex flex-wrap gap-2">
-                              {activeAccounts.filter(a => a.account_type === t).map(a => {
-                                const ref: SeriesRef = { kind: 'account', id: a.id }
-                                const on = isSeriesSelected(ref)
-                                return (
-                                  <button key={a.id} onClick={() => toggleSeries(ref)}
-                                    className={clsx('px-2.5 py-1 rounded-md text-xs font-medium border transition-colors',
-                                      on ? 'bg-amber-400/10 border-amber-400/40 text-amber-400' : 'bg-surface-700 border-white/[0.08] text-ink-300 hover:text-ink-100')}>
-                                    {a.name}
-                                  </button>
-                                )
-                              })}
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
                   </div>
                 )}
               </div>
