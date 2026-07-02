@@ -712,7 +712,7 @@ export default function ReportsPage() {
                             : null
                           return (
                             <tr className="border-b border-white/[0.08] bg-white/[0.03]">
-                              <td className="px-4 py-3 font-medium text-ink-100 sticky left-0 z-10">Total Expenses</td>
+                              <td className="px-4 py-3 font-medium text-ink-100 sticky left-0 z-10 bg-surface-800">Total Expenses</td>
                               <td className="px-4 py-3 text-right font-mono text-ink-100">{formatCurrencyWhole(budgetReport.total_expenses_actual)}</td>
                               <td className="px-4 py-3">
                                 {budgetReport.total_expenses_budgeted > 0 ? (
@@ -763,7 +763,7 @@ export default function ReportsPage() {
                             {/* Parent group header */}
                             <tr
                               key={`group-${group.parent}`}
-                              className="bg-white/[0.02] cursor-pointer hover:bg-white/[0.04] transition-colors border-t border-white/[0.12]"
+                              className="group bg-white/[0.02] cursor-pointer hover:bg-white/[0.04] transition-colors border-t border-white/[0.12]"
                               onClick={() => setCollapsedGroups(prev => {
                                 if (prev === 'all') {
                                   // Expand just this group: create set of all groups except this one
@@ -778,7 +778,7 @@ export default function ReportsPage() {
                                 return next
                               })}
                             >
-                              <td className="px-4 py-2.5 font-medium text-ink-100 sticky left-0 z-10">
+                              <td className="px-4 py-2.5 font-medium text-ink-100 sticky left-0 z-10 bg-surface-800 group-hover:bg-surface-700 transition-colors">
                                 <span className="inline-block w-4 text-ink-400 text-xs mr-1">
                                   {isGroupCollapsed(group.parent) ? '▸' : '▾'}
                                 </span>
