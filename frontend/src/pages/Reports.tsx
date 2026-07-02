@@ -143,10 +143,11 @@ export default function ReportsPage() {
   const tableWrapperRef = useRef<HTMLDivElement>(null)
   const floatingHeaderRef = useRef<HTMLDivElement>(null)
   const [showFloatingHeader, setShowFloatingHeader] = useState(false)
-  // Frozen category column eases its width/padding down as horizontal scroll begins,
-  // then holds at the minimum once fully collapsed so the rest of the scroll is normal.
-  const STICKY_COL_SHRINK_MAX = 8
-  const [stickyColShrink, setStickyColShrink] = useState(0)
+  // Frozen category column collapses (base padding shrinks + subcategory indent removed
+  // + column narrows) over the first few px of horizontal scroll, then holds at its
+  // minimum so the rest of the scroll behaves normally. colCollapse is 0..1 progress.
+  const STICKY_COL_COLLAPSE_DISTANCE = 32
+  const [colCollapse, setColCollapse] = useState(0)
 
   useEffect(() => {
     const thead = theadRef.current
@@ -178,8 +179,8 @@ export default function ReportsPage() {
     if (tableWrapperRef.current && floatingHeaderRef.current) {
       floatingHeaderRef.current.scrollLeft = tableWrapperRef.current.scrollLeft
     }
-    const shrink = Math.min(tableWrapperRef.current?.scrollLeft ?? 0, STICKY_COL_SHRINK_MAX)
-    setStickyColShrink(prev => (prev === shrink ? prev : shrink))
+    const p = Math.min(1, (tableWrapperRef.current?.scrollLeft ?? 0) / STICKY_COL_COLLAPSE_DISTANCE)
+    setColCollapse(prev => (prev === p ? prev : p))
   }, [])
 
   // Sync scroll position when floating header appears
@@ -188,6 +189,17 @@ export default function ReportsPage() {
       floatingHeaderRef.current.scrollLeft = tableWrapperRef.current.scrollLeft
     }
   }, [showFloatingHeader])
+
+  // Frozen category column geometry, interpolated by scroll-collapse progress (0..1).
+  // Base left padding 16→8, subcategory indent 40→8, first column 180→148px.
+  const catColWidth = Math.round(180 - 40 * colCollapse)
+  const catBasePad = Math.round(16 - 8 * colCollapse) // both left and right edge padding: 16→8
+  const catChildPadLeft = Math.round(40 - 32 * colCollapse)
+  const catTableMinWidth = Math.round(690 - 40 * colCollapse)
+  // Parent-row expand/collapse arrow: its fixed width + margin (20px) is the "indent"
+  // that slides the name right; collapse it to 0 alongside the subcategory indent.
+  const catArrowWidth = Math.round(16 * (1 - colCollapse))
+  const catArrowMargin = Math.round(4 * (1 - colCollapse))
 
   const cfMaxAnchor = (() => {
     // Anchor cash flow to the last complete month (avoid partial current month)
@@ -664,9 +676,9 @@ export default function ReportsPage() {
                           ref={floatingHeaderRef}
                           className="overflow-hidden"
                         >
-                          <table className="w-full text-sm" style={{ tableLayout: 'fixed', minWidth: '690px' }}>
+                          <table className="w-full text-sm" style={{ tableLayout: 'fixed', minWidth: catTableMinWidth }}>
                             <colgroup>
-                              <col style={{ width: `${180 - stickyColShrink}px` }} />
+                              <col style={{ width: catColWidth }} />
                               <col style={{ width: '100px' }} />
                               <col style={{ width: '140px' }} />
                               <col style={{ width: '90px' }} />
@@ -675,7 +687,7 @@ export default function ReportsPage() {
                             </colgroup>
                             <thead>
                               <tr>
-                                <th className="text-left text-ink-300 text-xs font-medium pr-4 py-3 bg-surface-800" style={{ paddingLeft: 16 - stickyColShrink }}>Category</th>
+                                <th className="text-left text-ink-300 text-xs font-medium py-3 bg-surface-800" style={{ paddingLeft: catBasePad, paddingRight: catBasePad }}>Category</th>
                                 <th className="text-right text-ink-300 text-xs font-medium px-4 py-3 bg-surface-800">This Month</th>
                                 <th className="text-ink-300 text-xs font-medium px-4 py-3 bg-surface-800">{showDiff ? 'vs Budget' : 'Budget'}</th>
                                 <th className="text-right text-ink-300 text-xs font-medium px-4 py-3 bg-surface-800">{showDiff ? 'vs 3M' : '3M Avg'}</th>
@@ -691,9 +703,9 @@ export default function ReportsPage() {
 
                   {/* Category table */}
                   <div className="flex-1 overflow-x-auto" ref={tableWrapperRef} onScroll={onTableScroll}>
-                    <table className="w-full text-sm" style={{ tableLayout: 'fixed', minWidth: '690px' }}>
+                    <table className="w-full text-sm" style={{ tableLayout: 'fixed', minWidth: catTableMinWidth }}>
                       <colgroup>
-                        <col style={{ width: `${180 - stickyColShrink}px` }} />
+                        <col style={{ width: catColWidth }} />
                         <col style={{ width: '100px' }} />
                         <col style={{ width: '140px' }} />
                         <col style={{ width: '90px' }} />
@@ -702,7 +714,7 @@ export default function ReportsPage() {
                       </colgroup>
                       <thead ref={theadRef}>
                         <tr className="border-b border-white/[0.06]">
-                          <th className="text-left text-ink-300 text-xs font-medium pr-4 py-3 sticky left-0 z-10 bg-surface-800" style={{ paddingLeft: 16 - stickyColShrink }}>Category</th>
+                          <th className="text-left text-ink-300 text-xs font-medium py-3 sticky left-0 z-10 bg-surface-800" style={{ paddingLeft: catBasePad, paddingRight: catBasePad }}>Category</th>
                           <th className="text-right text-ink-300 text-xs font-medium px-4 py-3">This Month</th>
                           <th className="text-ink-300 text-xs font-medium px-4 py-3">{showDiff ? 'vs Budget' : 'Budget'}</th>
                           <th className="text-right text-ink-300 text-xs font-medium px-4 py-3">{showDiff ? 'vs 3M' : '3M Avg'}</th>
@@ -718,7 +730,7 @@ export default function ReportsPage() {
                             : null
                           return (
                             <tr className="border-b border-white/[0.08] bg-white/[0.03]">
-                              <td className="pr-4 py-3 font-medium text-ink-100 sticky left-0 z-10 bg-surface-800" style={{ paddingLeft: 16 - stickyColShrink }}>Total Expenses</td>
+                              <td className="py-3 font-medium text-ink-100 sticky left-0 z-10 bg-surface-800" style={{ paddingLeft: catBasePad, paddingRight: catBasePad }}>Total Expenses</td>
                               <td className="px-4 py-3 text-right font-mono text-ink-100">{formatCurrencyWhole(budgetReport.total_expenses_actual)}</td>
                               <td className="px-4 py-3">
                                 {budgetReport.total_expenses_budgeted > 0 ? (
@@ -784,8 +796,8 @@ export default function ReportsPage() {
                                 return next
                               })}
                             >
-                              <td className="pr-4 py-2.5 font-medium text-ink-100 sticky left-0 z-10 bg-surface-800 group-hover:bg-surface-700 transition-colors" style={{ paddingLeft: 16 - stickyColShrink }}>
-                                <span className="inline-block w-4 text-ink-400 text-xs mr-1">
+                              <td className="py-2.5 font-medium text-ink-100 sticky left-0 z-10 bg-surface-800 group-hover:bg-surface-700 transition-colors" style={{ paddingLeft: catBasePad, paddingRight: catBasePad }}>
+                                <span className="inline-block overflow-hidden text-ink-400 text-xs" style={{ width: catArrowWidth, marginRight: catArrowMargin }}>
                                   {isGroupCollapsed(group.parent) ? '▸' : '▾'}
                                 </span>
                                 {pieColorMap.has(group.parent) && (
@@ -821,7 +833,7 @@ export default function ReportsPage() {
                             {/* Child category rows */}
                             {groupExpanded && visibleChildren.map((child) => (
                               <tr key={`child-${child.name}`} className="border-t border-white/[0.03]">
-                                <td className="px-4 py-2 pl-10 text-ink-300 sticky left-0 z-10 bg-surface-800">
+                                <td className="py-2 text-ink-300 sticky left-0 z-10 bg-surface-800" style={{ paddingLeft: catChildPadLeft, paddingRight: catBasePad }}>
                                   {pieColorMap.has(child.name) && (
                                     <span className="inline-block w-2 h-2 rounded-full mr-1.5 align-middle" style={{ backgroundColor: pieColorMap.get(child.name) }} />
                                   )}
