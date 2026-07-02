@@ -46,6 +46,29 @@ const ACCOUNT_TYPE_ORDER: AccountType[] = [
   'credit_card', 'mortgage', 'car_loan', 'student_loan', 'personal_loan', 'other_liability',
 ]
 
+// Heckbert's "nice numbers" algorithm — picks a round step size (1/2/5/10 x a power of ten)
+// so axis ticks land on whole, easy-to-compare numbers instead of raw fractions of the range.
+const niceNum = (range: number, round: boolean): number => {
+  if (range <= 0) return 1
+  const exponent = Math.floor(Math.log10(range))
+  const fraction = range / Math.pow(10, exponent)
+  const niceFraction = round
+    ? (fraction < 1.5 ? 1 : fraction < 3 ? 2 : fraction < 7 ? 5 : 10)
+    : (fraction <= 1 ? 1 : fraction <= 2 ? 2 : fraction <= 5 ? 5 : 10)
+  return niceFraction * Math.pow(10, exponent)
+}
+
+// Uniformly-spaced, round-number ticks that comfortably bound [min, max].
+const niceTicks = (min: number, max: number, tickCount = 5): { domain: [number, number]; ticks: number[] } => {
+  if (min === max) { min -= 1; max += 1 }
+  const step = niceNum(niceNum(max - min, false) / (tickCount - 1), true)
+  const niceMin = Math.floor(min / step) * step
+  const niceMax = Math.ceil(max / step) * step
+  const ticks: number[] = []
+  for (let v = niceMin; v <= niceMax + step / 2; v += step) ticks.push(Math.round(v))
+  return { domain: [niceMin, niceMax], ticks }
+}
+
 type ReportTab = 'spending' | 'net-worth' | 'cash-flow' | 'emergency-fund'
 
 // A single line the user can chart in the "Accounts & Groups" view.
@@ -299,6 +322,21 @@ export default function ReportsPage() {
   // Drop current in-progress month so the rightmost point is the last complete month
   const seriesChartData = seriesRowsTrimmed.length > 1 ? seriesRowsTrimmed.slice(0, -1) : seriesRowsTrimmed
   const seriesCombined = seriesChartData.map(r => r.__combined as number)
+
+  // Y-axis for the series chart — scale to the plotted data instead of anchoring at 0 (so
+  // smaller trends stay visible), with uniformly-spaced, round-number ticks for easy comparison.
+  const seriesActiveKeys = seriesDisplay === 'combined' && resolvedSeries.length >= 2
+    ? ['__combined']
+    : resolvedSeries.map(s => s.key)
+  const seriesYAxis: { domain: ['auto', 'auto'] | [number, number]; ticks: number[] | undefined } = (() => {
+    if (!seriesChartData.length || !seriesActiveKeys.length) return { domain: ['auto', 'auto'], ticks: undefined }
+    const vals = seriesChartData.flatMap(row => seriesActiveKeys.map(k => row[k] as number))
+    const min = Math.min(...vals)
+    const max = Math.max(...vals)
+    const pad = (max - min) * 0.1 || Math.abs(max) * 0.1 || 1
+    const { domain, ticks } = niceTicks(min - pad, max + pad)
+    return { domain, ticks }
+  })()
 
   const isSeriesSelected = (ref: SeriesRef) => selectedSeries.some(r => seriesKey(r) === seriesKey(ref))
   const toggleSeries = (ref: SeriesRef) => setSelectedSeries(prev =>
@@ -850,6 +888,82 @@ export default function ReportsPage() {
                       ))}
                     </select>
                   )}
+                  {/* Accounts & groups tiered multi-select picker */}
+                  {nwMode === 'series' && (
+                    <>
+                      <FilterDropdown
+                        disabled={!activeAccounts.length}
+                        isActive={selectedSeries.length > 0}
+                        buttonLabel={
+                          selectedSeries.length === 0 ? 'Select accounts or groups'
+                            : selectedSeries.length === 1 ? seriesLabel(selectedSeries[0])
+                              : `${selectedSeries.length} selected`
+                        }
+                      >
+                        {(['liquid', 'assets', 'liabilities'] as const).map(f => {
+                          const ref: SeriesRef = { kind: 'filter', filter: f }
+                          return (
+                            <CheckboxRow
+                              key={f}
+                              checked={isSeriesSelected(ref)}
+                              label={FILTER_LABELS[f]}
+                              bold
+                              onToggle={() => toggleSeries(ref)}
+                            />
+                          )
+                        })}
+                        <div className="h-px bg-white/[0.06] my-1" />
+                        {presentTypes.map(t => {
+                          const groupRef: SeriesRef = { kind: 'group', accountType: t }
+                          const groupSelected = isSeriesSelected(groupRef)
+                          const typeAccounts = activeAccounts.filter(a => a.account_type === t)
+                          const selectedChildCount = typeAccounts.filter(a => isSeriesSelected({ kind: 'account', id: a.id })).length
+
+                          return (
+                            <div key={t} className="py-1">
+                              <CheckboxRow
+                                checked={groupSelected}
+                                indeterminate={!groupSelected && selectedChildCount > 0}
+                                label={`All ${formatAccountType(t)}`}
+                                sublabel={selectedChildCount > 0 ? `${selectedChildCount}/${typeAccounts.length} accounts selected` : undefined}
+                                bold
+                                onToggle={() => toggleSeries(groupRef)}
+                              />
+                              <div className="pl-6">
+                                {typeAccounts.map(a => {
+                                  const accountRef: SeriesRef = { kind: 'account', id: a.id }
+                                  return (
+                                    <CheckboxRow
+                                      key={a.id}
+                                      checked={isSeriesSelected(accountRef)}
+                                      label={a.name}
+                                      onToggle={() => toggleSeries(accountRef)}
+                                    />
+                                  )
+                                })}
+                              </div>
+                            </div>
+                          )
+                        })}
+                      </FilterDropdown>
+                      {selectedSeries.length >= 2 && (
+                        <div className="flex rounded-lg bg-surface-700 border border-white/[0.08] p-0.5">
+                          {(['compare', 'combined'] as const).map(mode => (
+                            <button
+                              key={mode}
+                              onClick={() => setSeriesDisplay(mode)}
+                              className={clsx(
+                                'px-3 py-1 rounded-md text-xs font-semibold capitalize transition-colors',
+                                seriesDisplay === mode ? 'bg-amber-400/10 text-amber-400' : 'text-ink-300 hover:text-ink-100'
+                              )}
+                            >
+                              {mode}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </>
+                  )}
                   {/* Value shown inline on desktop only */}
                   <span className={`hidden md:inline font-mono text-lg ${
                     (headlineValue ?? 0) >= 0 ? 'text-teal-400' : 'text-red-400'
@@ -939,100 +1053,6 @@ export default function ReportsPage() {
               )
             })()}
           </Card>
-
-          {/* Series builder — tiered multi-select dropdown, same pattern as the Transactions category filter */}
-          {nwMode === 'series' && (
-            <Card padding={false}>
-              <div className="p-4 space-y-3">
-                <div className="flex items-center justify-between gap-3 flex-wrap">
-                  <FilterDropdown
-                    disabled={!activeAccounts.length}
-                    isActive={selectedSeries.length > 0}
-                    buttonLabel={
-                      selectedSeries.length === 0 ? 'Select accounts or groups'
-                        : selectedSeries.length === 1 ? seriesLabel(selectedSeries[0])
-                          : `${selectedSeries.length} selected`
-                    }
-                  >
-                    {(['liquid', 'assets', 'liabilities'] as const).map(f => {
-                      const ref: SeriesRef = { kind: 'filter', filter: f }
-                      return (
-                        <CheckboxRow
-                          key={f}
-                          checked={isSeriesSelected(ref)}
-                          label={FILTER_LABELS[f]}
-                          bold
-                          onToggle={() => toggleSeries(ref)}
-                        />
-                      )
-                    })}
-                    <div className="h-px bg-white/[0.06] my-1" />
-                    {presentTypes.map(t => {
-                      const groupRef: SeriesRef = { kind: 'group', accountType: t }
-                      const groupSelected = isSeriesSelected(groupRef)
-                      const typeAccounts = activeAccounts.filter(a => a.account_type === t)
-                      const selectedChildCount = typeAccounts.filter(a => isSeriesSelected({ kind: 'account', id: a.id })).length
-
-                      return (
-                        <div key={t} className="py-1">
-                          <CheckboxRow
-                            checked={groupSelected}
-                            indeterminate={!groupSelected && selectedChildCount > 0}
-                            label={`All ${formatAccountType(t)}`}
-                            sublabel={selectedChildCount > 0 ? `${selectedChildCount}/${typeAccounts.length} accounts selected` : undefined}
-                            bold
-                            onToggle={() => toggleSeries(groupRef)}
-                          />
-                          <div className="pl-6">
-                            {typeAccounts.map(a => {
-                              const accountRef: SeriesRef = { kind: 'account', id: a.id }
-                              return (
-                                <CheckboxRow
-                                  key={a.id}
-                                  checked={isSeriesSelected(accountRef)}
-                                  label={a.name}
-                                  onToggle={() => toggleSeries(accountRef)}
-                                />
-                              )
-                            })}
-                          </div>
-                        </div>
-                      )
-                    })}
-                  </FilterDropdown>
-
-                  {selectedSeries.length >= 2 && (
-                    <div className="flex rounded-lg bg-surface-700 border border-white/[0.08] p-0.5">
-                      {(['compare', 'combined'] as const).map(mode => (
-                        <button
-                          key={mode}
-                          onClick={() => setSeriesDisplay(mode)}
-                          className={clsx(
-                            'px-3 py-1 rounded-md text-xs font-semibold capitalize transition-colors',
-                            seriesDisplay === mode ? 'bg-amber-400/10 text-amber-400' : 'text-ink-300 hover:text-ink-100'
-                          )}
-                        >
-                          {mode}
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </div>
-
-                {selectedSeries.length > 0 && (
-                  <div className="flex flex-wrap gap-2">
-                    {resolvedSeries.map(s => (
-                      <span key={s.key} className="inline-flex items-center gap-1.5 pl-2 pr-1 py-1 rounded-md text-xs font-medium bg-surface-700 border border-white/[0.08]">
-                        <span className="w-2 h-2 rounded-full" style={{ background: s.color }} />
-                        <span className="text-ink-100">{s.label}</span>
-                        <button onClick={() => toggleSeries(s.ref)} className="text-ink-400 hover:text-rose-400 px-1 leading-none" aria-label={`Remove ${s.label}`}>×</button>
-                      </span>
-                    ))}
-                  </div>
-                )}
-              </div>
-            </Card>
-          )}
 
           {/* Chart */}
           {(nwMode === 'equity' ? equityLoading : nwLoading) ? (
@@ -1227,30 +1247,38 @@ export default function ReportsPage() {
           ) : (
             /* Accounts & Groups chart */
             <Card padding={false}>
-              <div className="p-5 pb-2 flex flex-wrap items-center gap-x-6 gap-y-1">
-                {seriesDisplay === 'combined' && resolvedSeries.length >= 2 ? (
-                  <div className="flex items-center gap-2">
+              <div className="p-5 pb-2 flex flex-wrap items-center gap-x-4 gap-y-1.5">
+                {seriesDisplay === 'combined' && resolvedSeries.length >= 2 && (
+                  <div className="flex items-center gap-2 pr-4 border-r border-white/[0.08]">
                     <div className="w-2.5 h-2.5 rounded-full" style={{ background: CHART_COLORS[0] }} />
                     <span className="text-xs text-ink-300">Combined Total</span>
                     <span className="font-mono text-sm text-amber-400">{formatCurrencyWhole(seriesCombined[seriesCombined.length - 1] ?? 0)}</span>
                   </div>
-                ) : (
-                  resolvedSeries.map(s => (
-                    <div key={s.key} className="flex items-center gap-2">
-                      <div className="w-2.5 h-2.5 rounded-full" style={{ background: s.color }} />
-                      <span className="text-xs text-ink-300">{s.label}</span>
-                      <span className="font-mono text-sm" style={{ color: s.color }}>
-                        {formatCurrencyWhole((seriesChartData[seriesChartData.length - 1]?.[s.key] as number) ?? 0)}
-                      </span>
-                    </div>
-                  ))
                 )}
+                {resolvedSeries.map(s => (
+                  <div key={s.key} className="flex items-center gap-1.5">
+                    <div className="w-2.5 h-2.5 rounded-full" style={{ background: s.color }} />
+                    <span className="text-xs text-ink-300">{s.label}</span>
+                    <span className="font-mono text-sm" style={{ color: s.color }}>
+                      {formatCurrencyWhole((seriesChartData[seriesChartData.length - 1]?.[s.key] as number) ?? 0)}
+                    </span>
+                    <button
+                      onClick={() => toggleSeries(s.ref)}
+                      className="text-ink-400 hover:text-rose-400 px-0.5 leading-none transition-colors"
+                      aria-label={`Remove ${s.label}`}
+                    >
+                      ×
+                    </button>
+                  </div>
+                ))}
               </div>
               <div className="px-5 pb-5">
                 <ResponsiveContainer width="100%" height={300}>
                   <AreaChart data={seriesChartData} margin={{ top: 10, right: 20, left: 10, bottom: 0 }}>
                     <XAxis dataKey="date" tick={{ fill: '#8a8580', fontSize: 10, fontFamily: 'DM Mono' }} tickLine={false} axisLine={false} />
                     <YAxis
+                      domain={seriesYAxis.domain}
+                      ticks={seriesYAxis.ticks}
                       tick={{ fill: '#8a8580', fontSize: 10, fontFamily: 'DM Mono' }}
                       tickLine={false}
                       axisLine={false}
