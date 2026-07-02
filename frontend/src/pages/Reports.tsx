@@ -883,7 +883,7 @@ export default function ReportsPage() {
           {/* Header card with view selector, time filter, and change stats */}
           <Card padding={false}>
             <div className="p-5 pb-3 space-y-2 md:space-y-0">
-              <div className="flex items-center justify-between">
+              <div className="flex items-center justify-between gap-2 flex-wrap">
                 <div className="flex items-center gap-3 flex-wrap">
                   {/* Mode selector: Net Worth / Equity / Accounts & Groups */}
                   <div className="flex rounded-lg bg-surface-700 border border-white/[0.08] p-0.5">
