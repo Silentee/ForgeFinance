@@ -267,6 +267,7 @@ export interface NetWorthDataPoint {
   total_liabilities: number
   net_worth: number
   by_type: Record<string, number>
+  by_account: Record<string, number>
 }
 
 export interface NetWorthHistory {

@@ -2,7 +2,8 @@ import { useState, useRef, useEffect, useCallback } from 'react'
 import { useParams, Link } from 'react-router-dom'
 import { useNetWorthHistory, useSpendingTrends, useMonthlyTotals, useBudgetReport, useEquityHistory, useAccounts } from '@/hooks'
 import { Card, CardHeader, PageHeader, StatCard, Spinner } from '@/components/ui'
-import { formatCurrencyWhole, formatCurrencyCompact, formatCurrencySignedWhole, currentYearMonth } from '@/lib/format'
+import { formatCurrencyWhole, formatCurrencyCompact, formatCurrencySignedWhole, currentYearMonth, formatAccountType } from '@/lib/format'
+import type { AccountType, Account } from '@/types'
 import {
   AreaChart, Area, XAxis, YAxis, Tooltip,
   ResponsiveContainer, CartesianGrid,
@@ -40,15 +41,46 @@ const CHART_COLORS = [
   '#f5a623', '#34d4b1', '#f87171', '#818cf8', '#34d4b1',
   '#fb923c', '#a78bfa', '#22d3ee', '#4ade80', '#f472b6',
 ]
+const ACCOUNT_TYPE_ORDER: AccountType[] = [
+  'checking', 'savings', 'hysa', 'cash', 'precious_metal', 'investment', 'retirement', 'hsa', 'real_estate', 'vehicle', 'other_asset',
+  'credit_card', 'mortgage', 'car_loan', 'student_loan', 'personal_loan', 'other_liability',
+]
 
 type ReportTab = 'spending' | 'net-worth' | 'cash-flow' | 'emergency-fund'
+
+// A single line the user can chart in the "Accounts & Groups" view.
+type SeriesRef =
+  | { kind: 'account'; id: number }               // one account
+  | { kind: 'group'; accountType: AccountType }    // all accounts of a type
+  | { kind: 'filter'; filter: 'liquid' | 'assets' | 'liabilities' } // quick semantic set
+
+const seriesKey = (ref: SeriesRef): string =>
+  ref.kind === 'account' ? `a:${ref.id}`
+    : ref.kind === 'group' ? `g:${ref.accountType}`
+      : `f:${ref.filter}`
+
+const FILTER_LABELS: Record<'liquid' | 'assets' | 'liabilities', string> = {
+  liquid: 'All Liquid Assets',
+  assets: 'All Assets',
+  liabilities: 'All Liabilities',
+}
+
+// Net-worth contribution of a raw snapshot balance (assets positive, liabilities negative).
+const signedBalance = (acc: Account | undefined, raw: number | undefined): number => {
+  if (acc == null || raw == null) return 0
+  return acc.is_liability ? -raw : raw
+}
 
 export default function ReportsPage() {
   const now = currentYearMonth()
   const { reportTab } = useParams<{ reportTab: string }>()
   const activeTab = (reportTab ?? 'net-worth') as ReportTab
   const [nwMonths, setNwMonths] = useState(12)
-  const [nwView, setNwView] = useState<'net-worth' | number>('net-worth') // 'net-worth' or equity pair asset_id
+  const [nwMode, setNwMode] = useState<'net-worth' | 'equity' | 'series'>('net-worth')
+  const [equityAssetId, setEquityAssetId] = useState<number | null>(null)
+  const [selectedSeries, setSelectedSeries] = useState<SeriesRef[]>([])
+  const [seriesDisplay, setSeriesDisplay] = useState<'compare' | 'combined'>('compare')
+  const [seriesPickerOpen, setSeriesPickerOpen] = useState(false)
   const prevMonth = (() => {
     const d = new Date(now.year, now.month - 1, 1)
     d.setMonth(d.getMonth() - 1)
@@ -185,9 +217,10 @@ export default function ReportsPage() {
     }
   })()
 
-  // Equity pair chart data when an asset is selected in the net worth dropdown
-  const selectedEquityPair = typeof nwView === 'number'
-    ? equityHistory?.pairs.find(p => p.asset_id === nwView) ?? null
+  // Equity pair chart data — defaults to the first pair until the user picks one
+  const effectiveEquityId = equityAssetId ?? equityHistory?.pairs?.[0]?.asset_id ?? null
+  const selectedEquityPair = effectiveEquityId != null
+    ? equityHistory?.pairs.find(p => p.asset_id === effectiveEquityId) ?? null
     : null
   const equityChartDataRaw = selectedEquityPair?.data_points.map(p => ({
     date: p.date.slice(0, 7),
@@ -218,6 +251,70 @@ export default function ReportsPage() {
       equityTicks: evenTicks(...equityDom), assetTicks: evenTicks(...assetDom), liabilityTicks: evenTicks(...liabDom),
     }
   })()
+
+  // ── "Accounts & Groups" series (individual accounts, type groups, quick filters) ──
+  const accountMap = new Map((accounts ?? []).map(a => [a.id, a]))
+  const activeAccounts = (accounts ?? []).filter(a => a.is_active)
+  const presentTypes = ACCOUNT_TYPE_ORDER.filter(t => activeAccounts.some(a => a.account_type === t))
+
+  const resolveSeriesAccountIds = (ref: SeriesRef): number[] => {
+    if (ref.kind === 'account') return [ref.id]
+    if (ref.kind === 'group') return activeAccounts.filter(a => a.account_type === ref.accountType).map(a => a.id)
+    if (ref.filter === 'liquid') return activeAccounts.filter(a => a.is_liquid && !a.is_liability).map(a => a.id)
+    if (ref.filter === 'assets') return activeAccounts.filter(a => !a.is_liability).map(a => a.id)
+    return activeAccounts.filter(a => a.is_liability).map(a => a.id)
+  }
+  const seriesLabel = (ref: SeriesRef): string => {
+    if (ref.kind === 'account') return accountMap.get(ref.id)?.name ?? `Account ${ref.id}`
+    if (ref.kind === 'group') return `All ${formatAccountType(ref.accountType)}`
+    return FILTER_LABELS[ref.filter]
+  }
+  const resolvedSeries = selectedSeries.map((ref, i) => ({
+    ref,
+    key: seriesKey(ref),
+    label: seriesLabel(ref),
+    accountIds: resolveSeriesAccountIds(ref),
+    color: CHART_COLORS[i % CHART_COLORS.length],
+  }))
+
+  // Per-month value for each series, net-worth-signed, aligned to the net worth timeline
+  const seriesRowsRaw = (nwHistory?.data_points ?? []).map(p => {
+    const row: Record<string, number | string> = { date: p.date.slice(0, 7) }
+    let combined = 0
+    for (const s of resolvedSeries) {
+      let v = 0
+      for (const id of s.accountIds) v += signedBalance(accountMap.get(id), p.by_account[String(id)])
+      row[s.key] = Math.round(v * 100) / 100
+      combined += v
+    }
+    row.__combined = Math.round(combined * 100) / 100
+    return row
+  })
+  const seriesRowIsEmpty = (row: Record<string, number | string>) =>
+    resolvedSeries.every(s => (row[s.key] as number) === 0)
+  const firstRealSeriesIdx = seriesRowsRaw.findIndex(r => !seriesRowIsEmpty(r))
+  const seriesRowsTrimmed = firstRealSeriesIdx >= 0 ? seriesRowsRaw.slice(firstRealSeriesIdx) : []
+  // Drop current in-progress month so the rightmost point is the last complete month
+  const seriesChartData = seriesRowsTrimmed.length > 1 ? seriesRowsTrimmed.slice(0, -1) : seriesRowsTrimmed
+  const seriesCombined = seriesChartData.map(r => r.__combined as number)
+
+  const isSeriesSelected = (ref: SeriesRef) => selectedSeries.some(r => seriesKey(r) === seriesKey(ref))
+  const toggleSeries = (ref: SeriesRef) => setSelectedSeries(prev =>
+    prev.some(r => seriesKey(r) === seriesKey(ref))
+      ? prev.filter(r => seriesKey(r) !== seriesKey(ref))
+      : [...prev, ref]
+  )
+
+  const hasEquityPairs = (equityHistory?.pairs?.length ?? 0) > 0
+  const nwModeOptions: { value: 'net-worth' | 'equity' | 'series'; label: string }[] = [
+    { value: 'net-worth', label: 'Net Worth' },
+    ...(hasEquityPairs ? [{ value: 'equity' as const, label: 'Equity' }] : []),
+    { value: 'series' as const, label: 'Accounts & Groups' },
+  ]
+  const headlineValue: number | null =
+    nwMode === 'net-worth' ? (nwHistory?.current_net_worth ?? null)
+      : nwMode === 'equity' ? (selectedEquityPair?.current_equity ?? null)
+        : (seriesCombined.length ? seriesCombined[seriesCombined.length - 1] : null)
 
   // Spending tab: build per-category averages from 12-month trend data (anchored to last complete month)
   const spendingExpenseSeries = spendingTrends?.series.filter(s => !s.is_income) ?? []
@@ -723,26 +820,39 @@ export default function ReportsPage() {
           <Card padding={false}>
             <div className="p-5 pb-3 space-y-2 md:space-y-0">
               <div className="flex items-center justify-between">
-                <div className="flex items-center gap-3">
-                  <select
-                    value={nwView === 'net-worth' ? 'net-worth' : String(nwView)}
-                    onChange={e => setNwView(e.target.value === 'net-worth' ? 'net-worth' : Number(e.target.value))}
-                    className="bg-surface-700 border border-white/[0.08] rounded-lg px-3 py-1.5 text-sm font-semibold text-ink-100 focus:outline-none focus:border-amber-400/40"
-                  >
-                    <option value="net-worth">Net Worth</option>
-                    {(equityHistory?.pairs ?? []).map(p => (
-                      <option key={p.asset_id} value={p.asset_id}>{p.asset_name}</option>
+                <div className="flex items-center gap-3 flex-wrap">
+                  {/* Mode selector: Net Worth / Equity / Accounts & Groups */}
+                  <div className="flex rounded-lg bg-surface-700 border border-white/[0.08] p-0.5">
+                    {nwModeOptions.map(m => (
+                      <button
+                        key={m.value}
+                        onClick={() => setNwMode(m.value)}
+                        className={clsx(
+                          'px-3 py-1 rounded-md text-sm font-semibold transition-colors whitespace-nowrap',
+                          nwMode === m.value ? 'bg-amber-400/10 text-amber-400' : 'text-ink-300 hover:text-ink-100'
+                        )}
+                      >
+                        {m.label}
+                      </button>
                     ))}
-                  </select>
+                  </div>
+                  {/* Equity pair picker */}
+                  {nwMode === 'equity' && (
+                    <select
+                      value={effectiveEquityId ?? ''}
+                      onChange={e => setEquityAssetId(Number(e.target.value))}
+                      className="bg-surface-700 border border-white/[0.08] rounded-lg px-3 py-1.5 text-sm font-semibold text-ink-100 focus:outline-none focus:border-amber-400/40"
+                    >
+                      {(equityHistory?.pairs ?? []).map(p => (
+                        <option key={p.asset_id} value={p.asset_id}>{p.asset_name}</option>
+                      ))}
+                    </select>
+                  )}
                   {/* Value shown inline on desktop only */}
                   <span className={`hidden md:inline font-mono text-lg ${
-                    (nwView === 'net-worth' ? (nwHistory?.current_net_worth ?? 0) : (selectedEquityPair?.current_equity ?? 0)) >= 0
-                      ? 'text-teal-400' : 'text-red-400'
+                    (headlineValue ?? 0) >= 0 ? 'text-teal-400' : 'text-red-400'
                   }`}>
-                    {nwView === 'net-worth'
-                      ? formatCurrencyWhole(nwHistory?.current_net_worth ?? null)
-                      : formatCurrencyWhole(selectedEquityPair?.current_equity ?? null)
-                    }
+                    {formatCurrencyWhole(headlineValue)}
                   </span>
                 </div>
                 <div className="flex gap-1">
@@ -760,47 +870,43 @@ export default function ReportsPage() {
                   ))}
                 </div>
               </div>
-              {/* Value shown below dropdown on mobile only */}
+              {/* Value shown below selector on mobile only */}
               <span className={`block md:hidden font-mono text-lg ${
-                (nwView === 'net-worth' ? (nwHistory?.current_net_worth ?? 0) : (selectedEquityPair?.current_equity ?? 0)) >= 0
-                  ? 'text-teal-400' : 'text-red-400'
+                (headlineValue ?? 0) >= 0 ? 'text-teal-400' : 'text-red-400'
               }`}>
-                {nwView === 'net-worth'
-                  ? formatCurrencyWhole(nwHistory?.current_net_worth ?? null)
-                  : formatCurrencyWhole(selectedEquityPair?.current_equity ?? null)
-                }
+                {formatCurrencyWhole(headlineValue)}
               </span>
             </div>
 
             {/* Change stats */}
             {(() => {
-              const isNw = nwView === 'net-worth'
-              const loading = isNw ? nwLoading : equityLoading
+              const loading = nwMode === 'equity' ? equityLoading : nwLoading
               let change1m: number | null | undefined
               let change3m: number | null | undefined
               let changePeriod: number | null | undefined
 
-              if (isNw) {
+              // Compute deltas from a numeric series anchored to the last complete month
+              const changesFrom = (vals: number[]) => {
+                const n = vals.length
+                const lastIdx = n - 1
+                const lastVal = vals[lastIdx]
+                return {
+                  c1m: lastIdx >= 1 ? Math.round((lastVal - vals[lastIdx - 1]) * 100) / 100 : null,
+                  c3m: Math.round((lastVal - vals[Math.max(0, lastIdx - 3)]) * 100) / 100,
+                  cPeriod: Math.round((lastVal - vals[0]) * 100) / 100,
+                }
+              }
+
+              if (nwMode === 'net-worth') {
                 change1m = nwHistory?.change_1m
                 change3m = nwHistory?.change_3m
                 changePeriod = nwHistory?.change_period
-              } else if (selectedEquityPair && equityChartData.length >= 2) {
-                // Anchor to last complete month (second to last data point), same as net worth
-                const n = equityChartData.length
-                const lastIdx = n - 1 // last complete month
-                const lastVal = equityChartData[lastIdx].equity
-
-                // 1 month: last complete month vs month before
-                change1m = lastIdx >= 1
-                  ? Math.round((lastVal - equityChartData[lastIdx - 1].equity) * 100) / 100
-                  : null
-
-                // 3 month: last complete month vs 3 months before (clamped to oldest real data)
-                const idx3m = Math.max(0, lastIdx - 3)
-                change3m = Math.round((lastVal - equityChartData[idx3m].equity) * 100) / 100
-
-                // Period: last complete month vs oldest real data point
-                changePeriod = Math.round((lastVal - equityChartData[0].equity) * 100) / 100
+              } else if (nwMode === 'equity' && selectedEquityPair && equityChartData.length >= 2) {
+                const c = changesFrom(equityChartData.map(p => p.equity))
+                change1m = c.c1m; change3m = c.c3m; changePeriod = c.cPeriod
+              } else if (nwMode === 'series' && seriesCombined.length >= 2) {
+                const c = changesFrom(seriesCombined)
+                change1m = c.c1m; change3m = c.c3m; changePeriod = c.cPeriod
               }
 
               const stats = [
@@ -832,24 +938,135 @@ export default function ReportsPage() {
             })()}
           </Card>
 
+          {/* Series builder — pick individual accounts, type groups, or quick filters */}
+          {nwMode === 'series' && (
+            <Card padding={false}>
+              <div className="p-4 space-y-3">
+                <div className="flex items-center justify-between gap-3 flex-wrap">
+                  <button
+                    onClick={() => setSeriesPickerOpen(o => !o)}
+                    className="px-3 py-1.5 rounded-lg text-sm font-semibold bg-surface-700 border border-white/[0.08] text-ink-100 hover:border-amber-400/40 transition-colors"
+                  >
+                    {seriesPickerOpen ? 'Done' : '+ Add accounts / groups'}
+                  </button>
+                  {selectedSeries.length >= 2 && (
+                    <div className="flex rounded-lg bg-surface-700 border border-white/[0.08] p-0.5">
+                      {(['compare', 'combined'] as const).map(mode => (
+                        <button
+                          key={mode}
+                          onClick={() => setSeriesDisplay(mode)}
+                          className={clsx(
+                            'px-3 py-1 rounded-md text-xs font-semibold capitalize transition-colors',
+                            seriesDisplay === mode ? 'bg-amber-400/10 text-amber-400' : 'text-ink-300 hover:text-ink-100'
+                          )}
+                        >
+                          {mode}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {selectedSeries.length > 0 && (
+                  <div className="flex flex-wrap gap-2">
+                    {resolvedSeries.map(s => (
+                      <span key={s.key} className="inline-flex items-center gap-1.5 pl-2 pr-1 py-1 rounded-md text-xs font-medium bg-surface-700 border border-white/[0.08]">
+                        <span className="w-2 h-2 rounded-full" style={{ background: s.color }} />
+                        <span className="text-ink-100">{s.label}</span>
+                        <button onClick={() => toggleSeries(s.ref)} className="text-ink-400 hover:text-rose-400 px-1 leading-none" aria-label={`Remove ${s.label}`}>×</button>
+                      </span>
+                    ))}
+                  </div>
+                )}
+
+                {seriesPickerOpen && (
+                  <div className="space-y-4 pt-2 border-t border-white/[0.06]">
+                    <div>
+                      <div className="label mb-2">Groups</div>
+                      <div className="flex flex-wrap gap-2">
+                        {(['liquid', 'assets', 'liabilities'] as const).map(f => {
+                          const ref: SeriesRef = { kind: 'filter', filter: f }
+                          const on = isSeriesSelected(ref)
+                          return (
+                            <button key={f} onClick={() => toggleSeries(ref)}
+                              className={clsx('px-2.5 py-1 rounded-md text-xs font-medium border transition-colors',
+                                on ? 'bg-amber-400/10 border-amber-400/40 text-amber-400' : 'bg-surface-700 border-white/[0.08] text-ink-300 hover:text-ink-100')}>
+                              {FILTER_LABELS[f]}
+                            </button>
+                          )
+                        })}
+                        {presentTypes.map(t => {
+                          const ref: SeriesRef = { kind: 'group', accountType: t }
+                          const on = isSeriesSelected(ref)
+                          return (
+                            <button key={t} onClick={() => toggleSeries(ref)}
+                              className={clsx('px-2.5 py-1 rounded-md text-xs font-medium border transition-colors',
+                                on ? 'bg-amber-400/10 border-amber-400/40 text-amber-400' : 'bg-surface-700 border-white/[0.08] text-ink-300 hover:text-ink-100')}>
+                              All {formatAccountType(t)}
+                            </button>
+                          )
+                        })}
+                      </div>
+                    </div>
+                    <div>
+                      <div className="label mb-2">Accounts</div>
+                      <div className="space-y-3">
+                        {presentTypes.map(t => (
+                          <div key={t}>
+                            <div className="text-[11px] uppercase tracking-wide text-ink-400 mb-1">{formatAccountType(t)}</div>
+                            <div className="flex flex-wrap gap-2">
+                              {activeAccounts.filter(a => a.account_type === t).map(a => {
+                                const ref: SeriesRef = { kind: 'account', id: a.id }
+                                const on = isSeriesSelected(ref)
+                                return (
+                                  <button key={a.id} onClick={() => toggleSeries(ref)}
+                                    className={clsx('px-2.5 py-1 rounded-md text-xs font-medium border transition-colors',
+                                      on ? 'bg-amber-400/10 border-amber-400/40 text-amber-400' : 'bg-surface-700 border-white/[0.08] text-ink-300 hover:text-ink-100')}>
+                                    {a.name}
+                                  </button>
+                                )
+                              })}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </Card>
+          )}
+
           {/* Chart */}
-          {(nwView === 'net-worth' ? nwLoading : equityLoading) ? (
+          {(nwMode === 'equity' ? equityLoading : nwLoading) ? (
             <Card>
               <div className="flex justify-center py-16"><Spinner size="lg" /></div>
             </Card>
-          ) : nwView === 'net-worth' && nwData.length === 0 ? (
+          ) : nwMode === 'net-worth' && nwData.length === 0 ? (
             <Card>
               <div className="py-16 text-center text-ink-400 text-sm">
                 No balance history yet — update account balances to see trends
               </div>
             </Card>
-          ) : nwView !== 'net-worth' && equityChartData.length === 0 ? (
+          ) : nwMode === 'equity' && equityChartData.length === 0 ? (
             <Card>
               <div className="py-16 text-center text-ink-400 text-sm">
                 No equity history yet — update asset and liability balances to see trends
               </div>
             </Card>
-          ) : nwView === 'net-worth' ? (
+          ) : nwMode === 'series' && selectedSeries.length === 0 ? (
+            <Card>
+              <div className="py-16 text-center text-ink-400 text-sm">
+                Pick one or more accounts or groups above to chart their balances over time
+              </div>
+            </Card>
+          ) : nwMode === 'series' && seriesChartData.length === 0 ? (
+            <Card>
+              <div className="py-16 text-center text-ink-400 text-sm">
+                No balance history yet for this selection — update account balances to see trends
+              </div>
+            </Card>
+          ) : nwMode === 'net-worth' ? (
             <Card padding={false}>
               <div className="p-5 pb-2 flex flex-wrap items-center gap-x-6 gap-y-1">
                 {[
@@ -929,7 +1146,7 @@ export default function ReportsPage() {
                 </ResponsiveContainer>
               </div>
             </Card>
-          ) : (
+          ) : nwMode === 'equity' ? (
             /* Equity pair chart */
             <Card padding={false}>
               <div className="p-5 pb-2 flex flex-wrap items-center gap-x-6 gap-y-1">
@@ -1006,6 +1223,60 @@ export default function ReportsPage() {
                     <Area type="monotone" dataKey="asset" yAxisId="asset" stroke="#34d4b1" strokeWidth={1.5} fill="url(#eqAssetGrad)" dot={false} />
                     <Area type="monotone" dataKey="liability" yAxisId="liability" stroke="#f87171" strokeWidth={1.5} fill="url(#eqLiabGrad)" dot={false} />
                     <Area type="monotone" dataKey="equity" yAxisId="equity" stroke="#f5a623" strokeWidth={2} fill="url(#eqGrad)" dot={false} />
+                  </AreaChart>
+                </ResponsiveContainer>
+              </div>
+            </Card>
+          ) : (
+            /* Accounts & Groups chart */
+            <Card padding={false}>
+              <div className="p-5 pb-2 flex flex-wrap items-center gap-x-6 gap-y-1">
+                {seriesDisplay === 'combined' && resolvedSeries.length >= 2 ? (
+                  <div className="flex items-center gap-2">
+                    <div className="w-2.5 h-2.5 rounded-full" style={{ background: CHART_COLORS[0] }} />
+                    <span className="text-xs text-ink-300">Combined Total</span>
+                    <span className="font-mono text-sm text-amber-400">{formatCurrencyWhole(seriesCombined[seriesCombined.length - 1] ?? 0)}</span>
+                  </div>
+                ) : (
+                  resolvedSeries.map(s => (
+                    <div key={s.key} className="flex items-center gap-2">
+                      <div className="w-2.5 h-2.5 rounded-full" style={{ background: s.color }} />
+                      <span className="text-xs text-ink-300">{s.label}</span>
+                      <span className="font-mono text-sm" style={{ color: s.color }}>
+                        {formatCurrencyWhole((seriesChartData[seriesChartData.length - 1]?.[s.key] as number) ?? 0)}
+                      </span>
+                    </div>
+                  ))
+                )}
+              </div>
+              <div className="px-5 pb-5">
+                <ResponsiveContainer width="100%" height={300}>
+                  <AreaChart data={seriesChartData} margin={{ top: 10, right: 20, left: 10, bottom: 0 }}>
+                    <XAxis dataKey="date" tick={{ fill: '#8a8580', fontSize: 10, fontFamily: 'DM Mono' }} tickLine={false} axisLine={false} />
+                    <YAxis
+                      tick={{ fill: '#8a8580', fontSize: 10, fontFamily: 'DM Mono' }}
+                      tickLine={false}
+                      axisLine={false}
+                      tickFormatter={v => `$${(v / 1000).toFixed(0)}k`}
+                      width={52}
+                    />
+                    <CartesianGrid stroke="rgba(255,255,255,0.04)" vertical={false} />
+                    <ReferenceLine y={0} stroke="rgba(255,255,255,0.12)" />
+                    <Tooltip
+                      contentStyle={{ background: '#161b24', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 8, fontFamily: 'DM Mono', fontSize: 12 }}
+                      labelStyle={{ color: '#8a8580', marginBottom: 4 }}
+                      formatter={(v: number, name: string) => {
+                        const label = name === '__combined' ? 'Combined Total' : (resolvedSeries.find(s => s.key === name)?.label ?? name)
+                        return [formatCurrencyWhole(v), label]
+                      }}
+                    />
+                    {seriesDisplay === 'combined' && resolvedSeries.length >= 2 ? (
+                      <Area type="monotone" dataKey="__combined" stroke={CHART_COLORS[0]} strokeWidth={2} fill={CHART_COLORS[0]} fillOpacity={0.08} dot={false} />
+                    ) : (
+                      resolvedSeries.map(s => (
+                        <Area key={s.key} type="monotone" dataKey={s.key} stroke={s.color} strokeWidth={2} fill={s.color} fillOpacity={0.06} dot={false} />
+                      ))
+                    )}
                   </AreaChart>
                 </ResponsiveContainer>
               </div>

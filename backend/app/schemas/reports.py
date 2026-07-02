@@ -186,6 +186,11 @@ class NetWorthDataPoint(BaseModel):
     # Per account-type breakdown
     by_type: dict[str, float]
 
+    # Per-account raw snapshot balance this month (account_id as str -> stored balance).
+    # Liabilities are positive (amount owed); the frontend applies the net-worth sign.
+    # Includes all active accounts, even those excluded from net worth.
+    by_account: dict[str, float]
+
 
 class NetWorthHistory(BaseModel):
     """Time series of monthly net worth snapshots."""

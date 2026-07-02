@@ -416,11 +416,12 @@ def build_net_worth_history(db: Session, months: int = 24) -> NetWorthHistory:
         y, m = _add_months(today.year, today.month, -i)
         periods.append((y, m))
 
+    # All active accounts so every account has a per-month balance in by_account;
+    # the include_in_net_worth filter is applied per-account below when accumulating totals.
     accounts: list[Account] = (
         db.query(Account)
         .filter(
             Account.is_active == True,
-            Account.include_in_net_worth == True,
         )
         .all()
     )
@@ -451,10 +452,16 @@ def build_net_worth_history(db: Session, months: int = 24) -> NetWorthHistory:
         total_assets = 0.0
         total_liabilities = 0.0
         by_type: dict[str, float] = defaultdict(float)
+        by_account: dict[str, float] = {}
 
         for acc in accounts:
             bal = _latest_balance_on_or_before(snaps_by_account.get(acc.id, []), cutoff)
             if bal is None:
+                continue
+            # Every active account is exposed per-account (raw balance) for individual/group charts.
+            by_account[str(acc.id)] = round(bal, 2)
+            # Only net-worth accounts contribute to the aggregate totals and by_type breakdown.
+            if not acc.include_in_net_worth:
                 continue
             if acc.is_liability:
                 total_liabilities += bal
@@ -470,6 +477,7 @@ def build_net_worth_history(db: Session, months: int = 24) -> NetWorthHistory:
             total_liabilities=round(total_liabilities, 2),
             net_worth=round(net, 2),
             by_type={k: round(v, 2) for k, v in by_type.items()},
+            by_account=by_account,
         ))
 
     # Find first data point with actual balance data (non-zero assets or liabilities)
