@@ -24,6 +24,8 @@ from app.schemas.reports import (
     MonthlyTotalsReport,
     NetWorthDataPoint,
     NetWorthHistory,
+    SpendingAverageLine,
+    SpendingAveragesReport,
     SpendingTrendsReport,
 )
 
@@ -688,6 +690,150 @@ def build_spending_trends(
         monthly_income_totals=[round(monthly_income[mk], 2) for mk in month_keys],
         monthly_expense_totals=[round(monthly_expenses[mk], 2) for mk in month_keys],
         monthly_net_totals=[round(monthly_income[mk] - monthly_expenses[mk], 2) for mk in month_keys],
+    )
+
+
+# ---------------------------------------------------------------------------
+# Spending averages — per-category trailing 1M/3M/6M/12M averages
+# ---------------------------------------------------------------------------
+
+def build_spending_averages(
+    db: Session,
+    year: int,
+    month: int,
+    account_ids: Optional[list[int]] = None,
+) -> SpendingAveragesReport:
+    """Per-category average monthly spend over trailing 1/3/6/12-month windows.
+
+    Windows include the selected month, except when the selected month is the
+    current calendar month — then they end at the previous (last complete)
+    month so the in-progress month doesn't skew the averages.
+
+    Each category's monthly value uses the same sign convention as
+    build_budget_report (expense = debits - credits, income = credits -
+    debits), so the averages are directly comparable to budget amounts.
+    """
+    today = date.today()
+    if (year, month) == (today.year, today.month):
+        anchor_year, anchor_month = _add_months(year, month, -1)
+    else:
+        anchor_year, anchor_month = year, month
+
+    # 12-month span ending at the anchor month (periods[-1] == anchor).
+    periods: list[tuple[int, int]] = []
+    for i in range(11, -1, -1):
+        y, m = _add_months(anchor_year, anchor_month, -i)
+        periods.append((y, m))
+    month_keys = [_month_key(y, m) for y, m in periods]
+
+    overall_date_from = _first_day_of_month(*periods[0])
+    overall_date_to = _last_day_of_month(*periods[-1])
+    transactions = _get_budget_transactions(db, overall_date_from, overall_date_to, account_ids)
+
+    # Annualized transactions can contribute to any period month; each spreads
+    # its amount forward 12 months from its date, so look back up to 11 months
+    # before the earliest period.
+    annualized_window_start = _first_day_of_month(*_add_months(*periods[0], -11))
+    annualized_window_end = _last_day_of_month(anchor_year, anchor_month)
+    annualized_q = db.query(Transaction).filter(
+        Transaction.is_annualized == True,
+        Transaction.transaction_type == TransactionType.DEBIT,
+        Transaction.is_transfer == False,
+        Transaction.exclude_from_budget == False,
+        Transaction.date >= annualized_window_start,
+        Transaction.date <= annualized_window_end,
+    )
+    if account_ids:
+        annualized_q = annualized_q.filter(Transaction.account_id.in_(account_ids))
+    annualized_txns = annualized_q.all()
+
+    # Accumulate per-category, per-month debits/credits.
+    agg: dict[Optional[int], dict[str, dict]] = defaultdict(
+        lambda: {mk: {"debits": 0.0, "credits": 0.0} for mk in month_keys}
+    )
+    for tx in transactions:
+        mk = _month_key(tx.date.year, tx.date.month)
+        if mk not in agg[tx.category_id]:
+            continue
+        amount = float(tx.amount)
+        if tx.transaction_type == TransactionType.DEBIT:
+            agg[tx.category_id][mk]["debits"] += amount
+        else:
+            agg[tx.category_id][mk]["credits"] += amount
+
+    for tx in annualized_txns:
+        tx_offset = tx.date.year * 12 + tx.date.month
+        monthly_share = float(tx.amount) / 12.0
+        for (py, pm), mk in zip(periods, month_keys):
+            period_offset = py * 12 + pm
+            if tx_offset <= period_offset <= tx_offset + 11:
+                agg[tx.category_id][mk]["debits"] += monthly_share
+
+    # Preload categories (+ their parents) for names / income flag / hierarchy.
+    cat_ids = {cid for cid in agg if cid is not None}
+    categories: dict[int, Category] = {}
+    if cat_ids:
+        for cat in db.query(Category).filter(Category.id.in_(cat_ids)).all():
+            categories[cat.id] = cat
+    parent_ids = {c.parent_id for c in categories.values() if c.parent_id}
+    parents: dict[int, Category] = {}
+    if parent_ids:
+        for cat in db.query(Category).filter(Category.id.in_(parent_ids)).all():
+            parents[cat.id] = cat
+
+    def _avg(values: list[float], n: int) -> float:
+        window = values[-n:]
+        return round(sum(window) / n, 2)
+
+    income_lines: list[SpendingAverageLine] = []
+    expense_lines: list[SpendingAverageLine] = []
+
+    for cat_id in agg:
+        cat = categories.get(cat_id) if cat_id is not None else None
+        is_income = cat.is_income if cat else False
+        cat_name = cat.name if cat else "Uncategorized"
+        parent_name = (
+            parents[cat.parent_id].name
+            if (cat and cat.parent_id and cat.parent_id in parents)
+            else None
+        )
+
+        month_data = agg[cat_id]
+        monthly_values = [
+            (month_data[mk]["credits"] - month_data[mk]["debits"]) if is_income
+            else (month_data[mk]["debits"] - month_data[mk]["credits"])
+            for mk in month_keys
+        ]
+
+        line = SpendingAverageLine(
+            category_id=cat_id,
+            category_name=cat_name,
+            parent_category_name=parent_name,
+            is_income=is_income,
+            avg_1m=_avg(monthly_values, 1),
+            avg_3m=_avg(monthly_values, 3),
+            avg_6m=_avg(monthly_values, 6),
+            avg_12m=_avg(monthly_values, 12),
+        )
+        (income_lines if is_income else expense_lines).append(line)
+
+    income_lines.sort(key=lambda l: l.category_name.lower())
+    expense_lines.sort(key=lambda l: (l.parent_category_name or "", l.category_name.lower()))
+
+    return SpendingAveragesReport(
+        year=year,
+        month=month,
+        anchor_label=f"trailing through {_short_month_label(anchor_year, anchor_month)}",
+        income_lines=income_lines,
+        expense_lines=expense_lines,
+        total_income_avg_1m=round(sum(l.avg_1m for l in income_lines), 2),
+        total_income_avg_3m=round(sum(l.avg_3m for l in income_lines), 2),
+        total_income_avg_6m=round(sum(l.avg_6m for l in income_lines), 2),
+        total_income_avg_12m=round(sum(l.avg_12m for l in income_lines), 2),
+        total_expense_avg_1m=round(sum(l.avg_1m for l in expense_lines), 2),
+        total_expense_avg_3m=round(sum(l.avg_3m for l in expense_lines), 2),
+        total_expense_avg_6m=round(sum(l.avg_6m for l in expense_lines), 2),
+        total_expense_avg_12m=round(sum(l.avg_12m for l in expense_lines), 2),
     )
 
 

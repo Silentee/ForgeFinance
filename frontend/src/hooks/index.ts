@@ -20,6 +20,7 @@ export const QK = {
   reportCashFlow:(year: number, month: number) => ['reports', 'cash-flow', year, month] as const,
   reportNetWorth:(months?: number) => ['reports', 'net-worth', months] as const,
   reportTrends:  (params?: object) => ['reports', 'trends', params] as const,
+  reportSpendingAverages: (year: number, month: number) => ['reports', 'spending-averages', year, month] as const,
   reportMonthlyTotals: (params?: object) => ['reports', 'monthly-totals', params] as const,
   reportSummary: () => ['reports', 'summary'] as const,
   imports:       (accountId?: number) => ['imports', accountId] as const,
@@ -270,6 +271,20 @@ export function useBulkCreateBudgets() {
   })
 }
 
+// Quiet sibling of useBulkCreateBudgets for per-field auto-save on blur —
+// same mutation + invalidation, but no toast (the page shows an inline "saved" tick).
+export function useAutoSaveBudgets() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (data: BudgetCreate[]) => budgetsApi.createBulk(data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['budgets'] })
+      qc.invalidateQueries({ queryKey: ['reports'] })
+    },
+    onError: (e: Error) => toast.error(e.message),
+  })
+}
+
 export function useCopyBudgetMonth() {
   const qc = useQueryClient()
   return useMutation({
@@ -313,6 +328,14 @@ export function useSpendingTrends(params?: { months?: number; year?: number; mon
   return useQuery({
     queryKey: QK.reportTrends(params),
     queryFn: () => reportsApi.spendingTrends(params),
+  })
+}
+
+export function useSpendingAverages(year: number, month: number) {
+  return useQuery({
+    queryKey: QK.reportSpendingAverages(year, month),
+    queryFn: () => reportsApi.spendingAverages(year, month),
+    enabled: !!year && !!month,
   })
 }
 

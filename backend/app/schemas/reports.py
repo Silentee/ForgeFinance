@@ -228,6 +228,48 @@ class SpendingTrendsReport(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Spending averages — per-category trailing 1M/3M/6M/12M averages
+# ---------------------------------------------------------------------------
+
+class SpendingAverageLine(BaseModel):
+    """Average monthly spend for one category across several trailing windows."""
+    category_id: Optional[int]
+    category_name: str
+    parent_category_name: Optional[str]   # None if this IS a top-level category
+    is_income: bool
+
+    avg_1m: float
+    avg_3m: float
+    avg_6m: float
+    avg_12m: float
+
+
+class SpendingAveragesReport(BaseModel):
+    """Per-category 1M/3M/6M/12M average spend, anchored to a budget month.
+
+    Windows include the selected month, except when the selected month is the
+    current month — then they use trailing complete months (ending the prior
+    month) so the in-progress month doesn't skew the averages.
+    """
+    year: int          # selected budget month
+    month: int
+    anchor_label: str  # e.g. "trailing through Jun 2026"
+
+    income_lines: list[SpendingAverageLine]
+    expense_lines: list[SpendingAverageLine]
+
+    # Totals per window
+    total_income_avg_1m: float
+    total_income_avg_3m: float
+    total_income_avg_6m: float
+    total_income_avg_12m: float
+    total_expense_avg_1m: float
+    total_expense_avg_3m: float
+    total_expense_avg_6m: float
+    total_expense_avg_12m: float
+
+
+# ---------------------------------------------------------------------------
 # Equity history — asset value minus linked liability for equity tracking
 # ---------------------------------------------------------------------------
 

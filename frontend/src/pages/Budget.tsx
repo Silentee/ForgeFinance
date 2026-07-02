@@ -1,8 +1,11 @@
-import { useState, useMemo, useEffect, useCallback } from 'react'
-import { useBudgetReport, useBudgets, useCategories, useBulkCreateBudgets, useCopyBudgetMonth, useDemoStatus, useBudgetVisibleCategories, useSetBudgetVisibleCategories } from '@/hooks'
-import { Card, PageHeader, Button, BudgetBar, StatCard, Spinner, Modal } from '@/components/ui'
-import { formatCurrency, formatCurrencyWhole, currentYearMonth } from '@/lib/format'
-import type { BudgetLineItem, Category, BudgetCreate } from '@/types'
+import { useState, useMemo, useEffect, useCallback, useRef } from 'react'
+import {
+  useBudgets, useCategories, useBulkCreateBudgets, useAutoSaveBudgets, useCopyBudgetMonth,
+  useDemoStatus, useBudgetVisibleCategories, useSetBudgetVisibleCategories, useSpendingAverages,
+} from '@/hooks'
+import { Card, PageHeader, Button, Spinner, Modal } from '@/components/ui'
+import { formatCurrencyWhole, formatCurrencySignedWhole, currentYearMonth } from '@/lib/format'
+import type { Category, BudgetCreate, SpendingAverageLine } from '@/types'
 import clsx from 'clsx'
 
 const MONTHS = [
@@ -34,7 +37,6 @@ function sortCategoryChildren(parentName: string, children: Category[]): Categor
   })
 }
 
-
 // Categories checked by default when demo data is active
 const DEMO_DEFAULT_VISIBLE = new Set([
   'Salary & Wages',
@@ -45,10 +47,6 @@ const DEMO_DEFAULT_VISIBLE = new Set([
   'Entertainment',
 ])
 
-// localStorage key prefix for visible categories (stored per month)
-const VISIBLE_CATEGORIES_KEY_PREFIX = 'forge-budget-visible-categories'
-const LEGACY_VISIBLE_CATEGORIES_KEY = 'forge-budget-visible-categories'
-
 function monthKey(year: number, month: number): string {
   return `${year}-${String(month).padStart(2, '0')}`
 }
@@ -58,350 +56,121 @@ function getPreviousMonth(year: number, month: number): { year: number; month: n
   return { year, month: month - 1 }
 }
 
-function loadVisibleCategories(year: number, month: number): Set<number> | null {
-  try {
-    const stored = localStorage.getItem(`${VISIBLE_CATEGORIES_KEY_PREFIX}-${monthKey(year, month)}`)
-    if (stored) {
-      return new Set(JSON.parse(stored))
-    }
-    const legacyStored = localStorage.getItem(LEGACY_VISIBLE_CATEGORIES_KEY)
-    if (legacyStored) {
-      return new Set(JSON.parse(legacyStored))
-    }
-  } catch {}
-  return null // Return null to indicate no stored value (vs empty set)
+function isOtherNamed(name: string): boolean {
+  const lower = name.toLowerCase()
+  return lower === 'other income' || lower === 'other expense'
 }
 
-function saveVisibleCategories(year: number, month: number, ids: Set<number>) {
-  localStorage.setItem(`${VISIBLE_CATEGORIES_KEY_PREFIX}-${monthKey(year, month)}`, JSON.stringify([...ids]))
-}
-function BudgetLineRow({ line, onClick }: { line: BudgetLineItem; onClick?: () => void }) {
-  const isOver = line.remaining < 0
-  const hasNoBudget = line.budgeted === 0
-  const isClickable = !!onClick && !!line.category_id
+// ── Row model for the budget table ───────────────────────────────────────────
 
-  // For income: over budget is good (green), under is bad (red)
-  // For expenses: over budget is bad (red), under is good (green)
-  const isGood = line.is_income ? isOver : !isOver
-  const statusColor = isGood ? 'text-teal-400' : 'text-rose-400'
-  const labelColor = isGood ? 'text-ink-400' : 'text-rose-400'
+interface Avgs { avg1: number; avg3: number; avg6: number; avg12: number }
 
-  return (
-    <div
-      onClick={isClickable ? onClick : undefined}
-      className={clsx(
-        'flex items-center gap-4 py-3 border-b border-white/[0.04] last:border-0 px-5 -mx-5',
-        isClickable && 'cursor-pointer hover:bg-white/[0.02] transition-colors'
-      )}
-    >
-      <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-2 mb-1.5">
-          <span className="text-sm text-ink-100">{line.category_name}</span>
-          <span className="text-2xs text-ink-400 font-mono ml-auto">
-            {line.transaction_count} txn{line.transaction_count !== 1 ? 's' : ''}
-          </span>
-        </div>
-        {!hasNoBudget && (
-          <BudgetBar
-            label=""
-            actual={line.actual}
-            budgeted={line.budgeted}
-            percentUsed={line.percent_used}
-            invertColors={line.is_income}
-          />
-        )}
-      </div>
-      <div className="text-right flex-shrink-0 min-w-28">
-        {!hasNoBudget ? (
-          <>
-            <div className={clsx('font-mono text-sm', statusColor)}>
-              {isOver ? '-' : '+'}{formatCurrencyWhole(Math.abs(line.remaining))}
-            </div>
-            <div className={clsx('text-2xs mt-0.5', labelColor)}>
-              {isOver ? 'over budget' : 'remaining'}
-            </div>
-          </>
-        ) : (
-          <>
-            <div className="font-mono text-sm text-ink-100">
-              {formatCurrencyWhole(line.actual)}
-            </div>
-            <div className="text-2xs text-ink-400 mt-0.5">no budget set</div>
-          </>
-        )}
-      </div>
-    </div>
-  )
-}
-
-function SetBudgetModal({ line, year, month, onClose }: {
-  line: BudgetLineItem
-  year: number
-  month: number
-  onClose: () => void
-}) {
-  const bulkCreate = useBulkCreateBudgets()
-  const [amount, setAmount] = useState(line.budgeted > 0 ? String(line.budgeted) : '')
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault()
-    if (!line.category_id) return
-
-    const value = parseFloat(amount)
-    if (!isNaN(value) && value >= 0) {
-      await bulkCreate.mutateAsync([{ category_id: line.category_id, year, month, amount: value }])
-    }
-    onClose()
-  }
-
-  return (
-    <Modal onClose={onClose} className="max-w-sm">
-      <h2 className="text-base font-semibold text-ink-100 mb-1">Set Budget</h2>
-      <p className="text-sm text-ink-300 mb-4">{line.category_name}</p>
-      <form onSubmit={handleSubmit} className="space-y-4">
-        <div>
-          <label className="label block mb-1.5">Budget Amount</label>
-          <input
-            type="number"
-            step="0.01"
-            min="0"
-            autoFocus
-            value={amount}
-            onChange={e => setAmount(e.target.value)}
-            onWheel={e => (e.target as HTMLInputElement).blur()}
-            placeholder="0.00"
-            className="w-full bg-surface-700 border border-white/[0.08] rounded-lg px-3 py-2 text-sm font-mono text-ink-100 focus:outline-none focus:border-amber-400/40 transition-colors"
-          />
-          <p className="text-2xs text-ink-400 mt-1">
-            Current spending: {formatCurrency(line.actual)}
-          </p>
-        </div>
-        <div className="flex gap-3">
-          <Button type="button" variant="ghost" onClick={onClose} className="flex-1">Cancel</Button>
-          <Button type="submit" variant="primary" loading={bulkCreate.isPending} className="flex-1">Save</Button>
-        </div>
-      </form>
-    </Modal>
-  )
-}
-
-interface GroupedLines {
-  groupName: string
+interface BudgetRow extends Avgs {
+  key: string
+  categoryId?: number        // undefined for aggregate "Other" rows
+  name: string
   isIncome: boolean
-  lines: BudgetLineItem[]
+  parentName?: string
+  editable: boolean          // false for aggregate rows (can't set a single budget)
 }
 
-function EditBudgetModal({
-  year, month, incomeLines, expenseLines, categories, visibleCategories, onClose, onSaveVisibility,
+interface Section {
+  groupName: string
+  rows: BudgetRow[]
+}
+
+function emptyAvgs(): Avgs {
+  return { avg1: 0, avg3: 0, avg6: 0, avg12: 0 }
+}
+
+// A single average cell — respects the $ / +/- toggle and colors good vs. bad.
+function AvgCell({
+  budget, avg, isIncome, showDiff, plain,
+}: { budget: number; avg: number; isIncome: boolean; showDiff: boolean; plain?: boolean }) {
+  // Aggregate ("Other") rows have no budget of their own — always show the raw avg.
+  if (plain) {
+    return <span className="text-ink-400">{avg > 0 ? formatCurrencyWhole(avg) : '—'}</span>
+  }
+
+  if (showDiff) {
+    const diff = budget - avg
+    // Expense: budgeting at/above avg is good. Income: budgeting at/below avg is good.
+    const good = isIncome ? diff <= 0 : diff >= 0
+    const color = Math.abs(diff) < 0.5 ? 'text-ink-400' : good ? 'text-teal-400' : 'text-rose-400'
+    return <span className={color}>{formatCurrencySignedWhole(diff)}</span>
+  }
+
+  const hasBudget = budget > 0
+  const good = isIncome ? budget <= avg : budget >= avg
+  const color = !hasBudget ? 'text-ink-300' : good ? 'text-ink-300' : 'text-rose-400'
+  return <span className={color}>{avg > 0 ? formatCurrencyWhole(avg) : '—'}</span>
+}
+
+// ── Manage-categories popover (replaces the old Edit Budget dialog's checkboxes) ─
+
+function ManageCategoriesPopover({
+  categories, visible, onToggle, onClose,
 }: {
-  year: number
-  month: number
-  incomeLines: BudgetLineItem[]
-  expenseLines: BudgetLineItem[]
   categories: Category[]
-  visibleCategories: Set<number>
+  visible: Set<number>
+  onToggle: (catId: number) => void
   onClose: () => void
-  onSaveVisibility: (ids: Set<number>) => void
 }) {
-  const bulkCreate = useBulkCreateBudgets()
-
-  // State for budget amounts: category_id -> amount string
-  const [amounts, setAmounts] = useState<Record<number, string>>(() => {
-    const initial: Record<number, string> = {}
-    for (const line of [...incomeLines, ...expenseLines]) {
-      if (line.category_id) {
-        initial[line.category_id] = line.budgeted > 0 ? String(line.budgeted) : ''
-      }
-    }
-    return initial
-  })
-
-  // State for visibility checkboxes
-  const [visible, setVisible] = useState<Set<number>>(() => new Set(visibleCategories))
-
-  const toggleVisible = (catId: number) => {
-    setVisible(prev => {
-      const next = new Set(prev)
-      if (next.has(catId)) {
-        next.delete(catId)
-      } else {
-        next.add(catId)
-      }
-      return next
-    })
-  }
-
-  const updateAmount = (catId: number, value: string) => {
-    setAmounts(prev => ({ ...prev, [catId]: value }))
-  }
-
-  // Group lines by parent category, preserving category order from database
-  const groupedLines = useMemo(() => {
-    const groups: GroupedLines[] = []
-
-    // Build a map of category_id -> line for quick lookup
-    const linesByCategory = new Map<number, BudgetLineItem>()
-    for (const line of [...incomeLines, ...expenseLines]) {
-      if (line.category_id) linesByCategory.set(line.category_id, line)
-    }
-
-    // Sort parent categories by GROUP_ORDER
-    const sortedParents = [...categories].filter(c => c.children.length > 0).sort((a, b) => {
+  const parents = useMemo(
+    () => [...categories].filter(c => c.children.length > 0).sort((a, b) => {
       const aIdx = GROUP_ORDER.indexOf(a.name)
       const bIdx = GROUP_ORDER.indexOf(b.name)
       return (aIdx === -1 ? 999 : aIdx) - (bIdx === -1 ? 999 : bIdx)
-    })
-
-    // Build groups using the same ordering as the transaction category dropdown
-    for (const parent of sortedParents) {
-      const lines: BudgetLineItem[] = []
-      for (const child of sortCategoryChildren(parent.name, parent.children)) {
-        const line = linesByCategory.get(child.id)
-        if (line) lines.push(line)
-      }
-      if (lines.length > 0) {
-        groups.push({ groupName: parent.name, isIncome: parent.is_income, lines })
-      }
-    }
-
-    return groups
-  }, [incomeLines, expenseLines, categories])
-
-  // Calculate totals (only include checked/visible categories)
-  const totals = useMemo(() => {
-    let income = 0
-    let expense = 0
-    for (const line of incomeLines) {
-      if (line.category_id && visible.has(line.category_id)) {
-        const val = parseFloat(amounts[line.category_id] || '0')
-        if (!isNaN(val)) income += val
-      }
-    }
-    for (const line of expenseLines) {
-      if (line.category_id && visible.has(line.category_id)) {
-        const val = parseFloat(amounts[line.category_id] || '0')
-        if (!isNaN(val)) expense += val
-      }
-    }
-    return { income, expense, net: income - expense }
-  }, [amounts, incomeLines, expenseLines, visible])
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault()
-
-    // Save visibility settings
-    onSaveVisibility(visible)
-
-    // Build bulk create payload for all non-empty budgets
-    const payload: BudgetCreate[] = []
-    for (const [catIdStr, amountStr] of Object.entries(amounts)) {
-      const catId = parseInt(catIdStr)
-      const parsed = parseFloat(amountStr)
-      const amount = isNaN(parsed) ? 0 : parsed
-      if (amount >= 0) {
-        payload.push({ category_id: catId, year, month, amount })
-      }
-    }
-
-    if (payload.length > 0) {
-      await bulkCreate.mutateAsync(payload)
-    }
-    onClose()
-  }
-
-  const renderLine = (line: BudgetLineItem) => (
-    <div key={line.category_id ?? line.category_name} className="flex items-center gap-3">
-      {line.category_id && (
-        <input
-          type="checkbox"
-          checked={visible.has(line.category_id)}
-          onChange={() => toggleVisible(line.category_id!)}
-          className="accent-amber-400 flex-shrink-0"
-        />
-      )}
-      <div className="flex-1 min-w-0">
-        <span className={clsx('text-sm', visible.has(line.category_id!) ? 'text-ink-100' : 'text-ink-400')}>
-          {line.category_name}
-        </span>
-      </div>
-      <div className="text-xs text-ink-400 font-mono w-20 text-right">
-        {formatCurrency(line.actual)}
-      </div>
-      {line.category_id && (
-        <input
-          type="number"
-          step="0.01"
-          min="0"
-          placeholder="0.00"
-          value={amounts[line.category_id] ?? ''}
-          onChange={e => updateAmount(line.category_id!, e.target.value)}
-          onWheel={e => (e.target as HTMLInputElement).blur()}
-          className="w-28 bg-surface-700 border border-white/[0.08] rounded-lg px-3 py-1.5 text-sm font-mono text-ink-100 text-right focus:outline-none focus:border-amber-400/40 transition-colors"
-        />
-      )}
-    </div>
+    }),
+    [categories],
   )
 
   return (
-    <Modal onClose={onClose} className="max-w-2xl max-h-[85vh] flex flex-col">
-      <h2 className="text-base font-semibold text-ink-100 mb-1">Edit Budget</h2>
-      <p className="text-sm text-ink-300 mb-4">{MONTHS[month - 1]} {year}</p>
-
-      <form onSubmit={handleSubmit} className="flex flex-col flex-1 min-h-0">
-        <div className="flex-1 overflow-y-auto pr-2 space-y-5">
-          {groupedLines.map((group, idx) => (
-            <div key={`${group.groupName}-${group.isIncome}`}>
-              <div className={clsx(
-                'flex items-center justify-between mb-2 pb-1 border-b',
-                group.isIncome ? 'border-teal-400/20' : 'border-rose-400/20'
+    <>
+      <div className="fixed inset-0 z-40" onClick={onClose} />
+      <div className="absolute left-0 top-full mt-2 z-50 w-72 max-w-[calc(100vw-2rem)] max-h-[70vh] overflow-y-auto rounded-xl border border-white/[0.08] bg-surface-800 shadow-xl p-4 space-y-4">
+        <p className="text-2xs text-ink-400">
+          Choose which categories to budget for this month. Unchecked categories roll into “Other”.
+        </p>
+        {parents.map(parent => {
+          const children = sortCategoryChildren(parent.name, parent.children)
+            .filter(c => c.name.toLowerCase() !== 'uncategorized')
+          if (children.length === 0) return null
+          return (
+            <div key={parent.id}>
+              <h4 className={clsx(
+                'text-2xs font-medium uppercase tracking-wide mb-1.5',
+                parent.is_income ? 'text-teal-400' : 'text-rose-400',
               )}>
-                <h3 className={clsx(
-                  'text-xs font-medium uppercase tracking-wide',
-                  group.isIncome ? 'text-teal-400' : 'text-rose-400'
-                )}>
-                  {group.groupName}
-                </h3>
-              </div>
-              <div className="space-y-1.5">
-                {group.lines.map(renderLine)}
+                {parent.name}
+              </h4>
+              <div className="space-y-1">
+                {children.map(child => (
+                  <label key={child.id} className="flex items-center gap-2 text-sm cursor-pointer py-0.5">
+                    <input
+                      type="checkbox"
+                      checked={visible.has(child.id)}
+                      onChange={() => onToggle(child.id)}
+                      className="accent-amber-400 flex-shrink-0"
+                    />
+                    <span className={visible.has(child.id) ? 'text-ink-100' : 'text-ink-400'}>
+                      {child.name}
+                    </span>
+                  </label>
+                ))}
               </div>
             </div>
-          ))}
-        </div>
-
-        {/* Footer with totals and buttons */}
-        <div className="border-t border-white/[0.06] pt-4 mt-4">
-          <div className="flex items-center justify-between mb-2 text-sm">
-            <span className="text-ink-400">Income</span>
-            <span className="font-mono text-teal-400">{formatCurrency(totals.income)}</span>
-          </div>
-          <div className="flex items-center justify-between mb-2 text-sm">
-            <span className="text-ink-400">Expenses</span>
-            <span className="font-mono text-rose-400">{formatCurrency(totals.expense)}</span>
-          </div>
-          <div className="flex items-center justify-between mb-4 text-sm">
-            <span className="text-ink-300 font-medium">Net Budgeted</span>
-            <span className="font-mono font-medium text-ink-100">
-              {totals.net >= 0 ? '+' : ''}{formatCurrency(totals.net)}
-            </span>
-          </div>
-          <div className="flex gap-3">
-            <Button type="button" variant="ghost" onClick={onClose} className="flex-1">Cancel</Button>
-            <Button type="submit" variant="primary" loading={bulkCreate.isPending} className="flex-1">
-              Save
-            </Button>
-          </div>
-        </div>
-      </form>
-    </Modal>
+          )
+        })}
+      </div>
+    </>
   )
 }
 
+// ── Copy budget between months (unchanged behavior) ──────────────────────────
+
 function CopyBudgetModal({
-  fromYear,
-  fromMonth,
-  sourceVisible,
-  onClose,
+  fromYear, fromMonth, sourceVisible, onClose,
 }: {
   fromYear: number
   fromMonth: number
@@ -518,32 +287,40 @@ function CopyBudgetModal({
   )
 }
 
+// Grid template shared by header, rows, and totals so columns stay aligned.
+const GRID = 'grid grid-cols-[minmax(9rem,1fr)_6rem_repeat(4,minmax(3.5rem,4.5rem))] gap-x-2 items-center'
+
 export default function BudgetPage() {
   const now = currentYearMonth()
   const [year, setYear] = useState(now.year)
   const [month, setMonth] = useState(now.month)
-  const [showEdit, setShowEdit] = useState(false)
   const [showCopy, setShowCopy] = useState(false)
-  const [editLine, setEditLine] = useState<BudgetLineItem | null>(null)
+  const [showManage, setShowManage] = useState(false)
+  const [showDiff, setShowDiff] = useState(false)
   const [visibleCategories, setVisibleCategories] = useState<Set<number>>(new Set())
   const [autoCarryDone, setAutoCarryDone] = useState<Set<string>>(new Set())
   const [visibilityInitDone, setVisibilityInitDone] = useState<Set<string>>(new Set())
 
-  const { data: report, isLoading } = useBudgetReport(year, month)
+  // Local budget input text: category_id -> string. Synced from server, edited inline.
+  const [amounts, setAmounts] = useState<Record<number, string>>({})
+  const [focusedCat, setFocusedCat] = useState<number | null>(null)
+  const [savedCat, setSavedCat] = useState<number | null>(null)
+  const savedTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+
   const { data: categories } = useCategories()
   const { data: budgets } = useBudgets({ year, month })
+  const { data: averages, isLoading } = useSpendingAverages(year, month)
   const previousMonth = getPreviousMonth(year, month)
   const { data: previousBudgets } = useBudgets({ year: previousMonth.year, month: previousMonth.month })
   const { data: demoStatus } = useDemoStatus()
   const bulkCreateBudgets = useBulkCreateBudgets()
+  const autoSaveBudgets = useAutoSaveBudgets()
   const setBudgetVisibleCategories = useSetBudgetVisibleCategories()
   const isDemo = !!demoStatus?.has_demo_data
   const visibility = useBudgetVisibleCategories(year, month, !isDemo && demoStatus !== undefined)
   const previousVisibility = useBudgetVisibleCategories(previousMonth.year, previousMonth.month, !isDemo && demoStatus !== undefined)
 
-  // Sync visible categories for the selected month.
-  // Demo mode: derive from DEMO_DEFAULT_VISIBLE (local-only).
-  // Real mode: load from server; if missing, carry from previous month, else default all checked.
+  // ── Visible-category sync (demo default / server / carry-from-previous) ──────
   useEffect(() => {
     if (!categories || demoStatus === undefined) return
     const flatten = (cats: Category[]): Category[] =>
@@ -564,7 +341,6 @@ export default function BudgetPage() {
       return
     }
 
-    // Server says: no value set yet for this month. Create one (once) so it's shared across devices.
     if (serverIds === null) {
       if (visibilityInitDone.has(key)) return
       setVisibilityInitDone(prev => new Set(prev).add(key))
@@ -575,23 +351,21 @@ export default function BudgetPage() {
         : new Set<number>(leaves.map(l => l.id))
 
       setVisibleCategories(ids)
-      setBudgetVisibleCategories.mutate({
-        year,
-        month,
-        category_ids: [...ids],
-      })
+      setBudgetVisibleCategories.mutate({ year, month, category_ids: [...ids] })
     }
   }, [categories, demoStatus, year, month, visibility.data?.category_ids, previousVisibility.data?.category_ids, visibilityInitDone, setBudgetVisibleCategories])
 
-  const handleSaveVisibility = useCallback((ids: Set<number>) => {
-    setVisibleCategories(ids)
-    if (demoStatus?.has_demo_data) {
-      return
+  const handleToggleVisible = useCallback((catId: number) => {
+    const next = new Set(visibleCategories)
+    if (next.has(catId)) next.delete(catId)
+    else next.add(catId)
+    setVisibleCategories(next)
+    if (!demoStatus?.has_demo_data) {
+      setBudgetVisibleCategories.mutate({ year, month, category_ids: [...next] })
     }
-    setBudgetVisibleCategories.mutate({ year, month, category_ids: [...ids] })
-  }, [demoStatus, setBudgetVisibleCategories, year, month])
+  }, [visibleCategories, demoStatus, setBudgetVisibleCategories, year, month])
 
-  // Auto-carry budget values (and selected categories) into the new current month from the previous month.
+  // ── Auto-carry budget values into the new current month from the previous ────
   useEffect(() => {
     if (!demoStatus || demoStatus.has_demo_data) return
     if (!budgets || !previousBudgets) return
@@ -606,401 +380,345 @@ export default function BudgetPage() {
     }
 
     const payload: BudgetCreate[] = previousBudgets.map(b => ({
-      category_id: b.category_id,
-      year,
-      month,
-      amount: b.amount,
-      notes: b.notes,
+      category_id: b.category_id, year, month, amount: b.amount, notes: b.notes,
     }))
-
     bulkCreateBudgets.mutate(payload, {
-      onSuccess: () => {
-        setAutoCarryDone(prev => new Set(prev).add(key))
-      },
-      onError: () => {
-        setAutoCarryDone(prev => new Set(prev).add(key))
-      },
+      onSuccess: () => setAutoCarryDone(prev => new Set(prev).add(key)),
+      onError: () => setAutoCarryDone(prev => new Set(prev).add(key)),
     })
-  }, [demoStatus, budgets, previousBudgets, year, month, now.year, now.month, autoCarryDone, bulkCreateBudgets, previousMonth.year, previousMonth.month])
+  }, [demoStatus, budgets, previousBudgets, year, month, now.year, now.month, autoCarryDone, bulkCreateBudgets])
 
-  // Build a map of existing budgets: category_id -> amount
-  const existingBudgets = useMemo(() => {
-    const map = new Map<number, number>()
+  // ── Sync budget inputs from server (preserving the field being edited) ───────
+  useEffect(() => {
+    const map: Record<number, string> = {}
     if (budgets) {
       for (const b of budgets) {
-        map.set(b.category_id, b.amount)
+        if (b.amount > 0) map[b.category_id] = String(b.amount)
       }
     }
-    return map
+    setAmounts(prev => {
+      if (focusedCat != null && prev[focusedCat] !== undefined) {
+        map[focusedCat] = prev[focusedCat]
+      }
+      return map
+    })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [budgets, year, month])
+
+  const serverBudgetByCat = useMemo(() => {
+    const m = new Map<number, number>()
+    if (budgets) for (const b of budgets) m.set(b.category_id, b.amount)
+    return m
   }, [budgets])
 
-  // Build budget lines for ALL leaf categories, merging with report data
-  const allLines = useMemo(() => {
-    if (!categories) return { income: [], expense: [] }
-
-    // Flatten categories to get all leaves
-    const flatten = (cats: Category[]): Category[] =>
-      cats.flatMap(c => c.children.length > 0 ? flatten(c.children) : [c])
-
-    const leaves = flatten(categories)
-    const incomeLeaves = leaves.filter(c => c.is_income)
-    const expenseLeaves = leaves.filter(c => !c.is_income)
-
-    // Get actuals from report if available
-    const reportIncomeMap = new Map<number, BudgetLineItem>()
-    const reportExpenseMap = new Map<number, BudgetLineItem>()
-    if (report) {
-      for (const line of report.income_lines) {
-        if (line.category_id) reportIncomeMap.set(line.category_id, line)
-      }
-      for (const line of report.expense_lines) {
-        if (line.category_id) reportExpenseMap.set(line.category_id, line)
+  const avgByCat = useMemo(() => {
+    const m = new Map<number, SpendingAverageLine>()
+    if (averages) {
+      for (const line of [...averages.income_lines, ...averages.expense_lines]) {
+        if (line.category_id != null) m.set(line.category_id, line)
       }
     }
+    return m
+  }, [averages])
 
-    // Find parent name helper
-    const getParentName = (cat: Category): string | undefined => {
-      if (!cat.parent_id) return undefined
-      const allCats = categories.flatMap(c => [c, ...c.children])
-      const parent = allCats.find(p => p.id === cat.parent_id)
-      return parent?.name
+  const leafById = useMemo(() => {
+    const m = new Map<number, Category>()
+    if (categories) {
+      const walk = (cats: Category[]) => cats.forEach(c => c.children.length > 0 ? walk(c.children) : m.set(c.id, c))
+      walk(categories)
     }
+    return m
+  }, [categories])
 
-    const buildLine = (cat: Category, reportLine?: BudgetLineItem): BudgetLineItem => {
-      const budgeted = existingBudgets.get(cat.id) ?? 0
-      const actual = reportLine?.actual ?? 0
-      const remaining = budgeted - actual
-      return {
-        category_id: cat.id,
-        category_name: cat.name,
-        parent_category_name: getParentName(cat),
-        is_income: cat.is_income,
-        budgeted,
-        actual,
-        remaining,
-        percent_used: budgeted > 0 ? Math.round((actual / budgeted) * 100 * 10) / 10 : undefined,
-        transaction_count: reportLine?.transaction_count ?? 0,
-      }
-    }
+  const handleBudgetChange = (catId: number, value: string) => {
+    setAmounts(prev => ({ ...prev, [catId]: value }))
+  }
 
-    const incomeLines = incomeLeaves.map(cat => buildLine(cat, reportIncomeMap.get(cat.id)))
-    const expenseLines = expenseLeaves.map(cat => buildLine(cat, reportExpenseMap.get(cat.id)))
+  const handleBudgetBlur = (catId: number) => {
+    setFocusedCat(null)
+    const parsed = parseFloat(amounts[catId] ?? '')
+    const amount = isNaN(parsed) ? 0 : Math.max(0, parsed)
+    const serverVal = serverBudgetByCat.get(catId) ?? 0
+    if (amount === serverVal) return
+    autoSaveBudgets.mutate([{ category_id: catId, year, month, amount }], {
+      onSuccess: () => {
+        setSavedCat(catId)
+        if (savedTimer.current) clearTimeout(savedTimer.current)
+        savedTimer.current = setTimeout(() => setSavedCat(c => (c === catId ? null : c)), 1500)
+      },
+    })
+  }
 
-    return { income: incomeLines, expense: expenseLines }
-  }, [categories, report, existingBudgets])
+  // ── Build grouped sections from visible categories + "Other" aggregates ──────
+  const sections = useMemo<Section[]>(() => {
+    if (!categories) return []
 
-  // Build display lines: visible categories shown individually, others aggregated into "Other"
-  const displayLines = useMemo(() => {
-    const visibleIncome: BudgetLineItem[] = []
-    const visibleExpense: BudgetLineItem[] = []
-    let otherIncome: BudgetLineItem | null = null
-    let otherExpense: BudgetLineItem | null = null
+    const parents = [...categories].filter(c => c.children.length > 0).sort((a, b) => {
+      const aIdx = GROUP_ORDER.indexOf(a.name)
+      const bIdx = GROUP_ORDER.indexOf(b.name)
+      return (aIdx === -1 ? 999 : aIdx) - (bIdx === -1 ? 999 : bIdx)
+    })
 
-    // Helper to check if a category should merge into "Other"
-    const isOtherCategory = (name: string) => {
-      const lower = name.toLowerCase()
-      return lower === 'other income' || lower === 'other expense'
-    }
+    const grouped = new Map<string, BudgetRow[]>()
+    GROUP_ORDER.forEach(g => grouped.set(g, []))
 
-    // Track if the "Other Income"/"Other Expense" categories are checked
+    const otherIncome = emptyAvgs()
+    const otherExpense = emptyAvgs()
     let otherIncomeChecked = false
     let otherExpenseChecked = false
 
-    for (const line of allLines.income) {
-      const isOther = isOtherCategory(line.category_name)
-      const isVisible = line.category_id && visibleCategories.has(line.category_id)
+    const addAvgs = (bucket: Avgs, line?: SpendingAverageLine) => {
+      if (!line) return
+      bucket.avg1 += line.avg_1m; bucket.avg3 += line.avg_3m
+      bucket.avg6 += line.avg_6m; bucket.avg12 += line.avg_12m
+    }
 
-      // Track if the actual "Other Income" category is checked
-      if (isOther && isVisible) {
-        otherIncomeChecked = true
-      }
+    for (const parent of parents) {
+      for (const child of sortCategoryChildren(parent.name, parent.children)) {
+        if (child.name.toLowerCase() === 'uncategorized') continue
+        const line = avgByCat.get(child.id)
+        const named = isOtherNamed(child.name)
+        const visible = visibleCategories.has(child.id)
 
-      // "Other Income" category always merges into the aggregate bucket
-      if (isOther || !isVisible) {
-        if (!otherIncome) {
-          otherIncome = {
-            category_id: undefined,
-            category_name: 'Other Income',
-            parent_category_name: undefined,
-            is_income: true,
-            budgeted: 0,
-            actual: 0,
-            remaining: 0,
-            percent_used: undefined,
-            transaction_count: 0,
+        if (named || !visible) {
+          addAvgs(child.is_income ? otherIncome : otherExpense, line)
+          if (named && visible) {
+            if (child.is_income) otherIncomeChecked = true
+            else otherExpenseChecked = true
           }
+          continue
         }
-        otherIncome.actual += line.actual
-        otherIncome.transaction_count += line.transaction_count
-        // Include budget if the category is checked
-        if (isVisible) {
-          otherIncome.budgeted += line.budgeted
-        }
-      } else {
-        visibleIncome.push(line)
+
+        grouped.get(parent.name)?.push({
+          key: String(child.id),
+          categoryId: child.id,
+          name: child.name,
+          isIncome: child.is_income,
+          parentName: parent.name,
+          editable: true,
+          avg1: line?.avg_1m ?? 0, avg3: line?.avg_3m ?? 0,
+          avg6: line?.avg_6m ?? 0, avg12: line?.avg_12m ?? 0,
+        })
       }
     }
 
-    for (const line of allLines.expense) {
-      const isOther = isOtherCategory(line.category_name)
-      const isVisible = line.category_id && visibleCategories.has(line.category_id)
-
-      // Track if the actual "Other Expense" category is checked
-      if (isOther && isVisible) {
-        otherExpenseChecked = true
-      }
-
-      // "Other Expense" category always merges into the aggregate bucket
-      if (isOther || !isVisible) {
-        if (!otherExpense) {
-          otherExpense = {
-            category_id: undefined,
-            category_name: 'Other Expenses',
-            parent_category_name: undefined,
-            is_income: false,
-            budgeted: 0,
-            actual: 0,
-            remaining: 0,
-            percent_used: undefined,
-            transaction_count: 0,
-          }
-        }
-        otherExpense.actual += line.actual
-        otherExpense.transaction_count += line.transaction_count
-        // Include budget if the category is checked
-        if (isVisible) {
-          otherExpense.budgeted += line.budgeted
-        }
-      } else {
-        visibleExpense.push(line)
-      }
+    const hasVals = (a: Avgs) => a.avg1 !== 0 || a.avg3 !== 0 || a.avg6 !== 0 || a.avg12 !== 0
+    if (otherIncomeChecked || hasVals(otherIncome)) {
+      grouped.get('Other')?.push({
+        key: 'other-income', name: 'Other Income', isIncome: true, editable: false, ...otherIncome,
+      })
     }
-
-    // Show "Other" items if:
-    // 1. The "Other Income"/"Other Expense" category is checked, OR
-    // 2. There are values (actual > 0 or budgeted > 0)
-    const showOtherIncome = otherIncomeChecked || (otherIncome && (otherIncome.actual > 0 || otherIncome.budgeted > 0))
-    const showOtherExpense = otherExpenseChecked || (otherExpense && (otherExpense.actual > 0 || otherExpense.budgeted > 0))
-
-    if (showOtherIncome) {
-      if (!otherIncome) {
-        otherIncome = {
-          category_id: undefined,
-          category_name: 'Other Income',
-          parent_category_name: undefined,
-          is_income: true,
-          budgeted: 0,
-          actual: 0,
-          remaining: 0,
-          percent_used: undefined,
-          transaction_count: 0,
-        }
-      }
-      otherIncome.remaining = otherIncome.budgeted - otherIncome.actual
-      otherIncome.percent_used = otherIncome.budgeted > 0
-        ? Math.round((otherIncome.actual / otherIncome.budgeted) * 100 * 10) / 10
-        : undefined
-      visibleIncome.push(otherIncome)
-    }
-
-    if (showOtherExpense) {
-      if (!otherExpense) {
-        otherExpense = {
-          category_id: undefined,
-          category_name: 'Other Expenses',
-          parent_category_name: undefined,
-          is_income: false,
-          budgeted: 0,
-          actual: 0,
-          remaining: 0,
-          percent_used: undefined,
-          transaction_count: 0,
-        }
-      }
-      otherExpense.remaining = otherExpense.budgeted - otherExpense.actual
-      otherExpense.percent_used = otherExpense.budgeted > 0
-        ? Math.round((otherExpense.actual / otherExpense.budgeted) * 100 * 10) / 10
-        : undefined
-      visibleExpense.push(otherExpense)
-    }
-
-    return { income: visibleIncome, expense: visibleExpense }
-  }, [allLines, visibleCategories])
-
-  const categorySections = useMemo(() => {
-    const grouped = new Map<string, BudgetLineItem[]>()
-    for (const groupName of GROUP_ORDER) {
-      grouped.set(groupName, [])
-    }
-
-    for (const line of [...displayLines.income, ...displayLines.expense]) {
-      const groupName = line.parent_category_name
-        ?? (line.category_name.toLowerCase().startsWith('other ') ? 'Other' : (line.is_income ? 'Income' : 'Other'))
-      if (!grouped.has(groupName)) {
-        grouped.set(groupName, [])
-      }
-      grouped.get(groupName)!.push(line)
+    if (otherExpenseChecked || hasVals(otherExpense)) {
+      grouped.get('Other')?.push({
+        key: 'other-expenses', name: 'Other Expenses', isIncome: false, editable: false, ...otherExpense,
+      })
     }
 
     return GROUP_ORDER
-      .map(groupName => {
-        const lines = grouped.get(groupName) ?? []
-        const current = lines.reduce((sum, line) => sum + line.actual, 0)
-        const budgeted = lines.reduce((sum, line) => sum + line.budgeted, 0)
-        return { groupName, lines, current, budgeted }
-      })
-      .filter(section => section.lines.length > 0)
-  }, [displayLines])
+      .map(groupName => ({ groupName, rows: grouped.get(groupName) ?? [] }))
+      .filter(s => s.rows.length > 0)
+  }, [categories, avgByCat, visibleCategories])
 
-
-  // Calculate totals from visible categories only (budgeted excludes unchecked)
-  const totals = useMemo(() => {
-    // Actuals include all transactions
-    const totalIncomeActual = allLines.income.reduce((sum, l) => sum + l.actual, 0)
-    const totalExpensesActual = allLines.expense.reduce((sum, l) => sum + l.actual, 0)
-    // Budgeted only includes visible categories
-    const totalIncomeBudgeted = allLines.income
-      .filter(l => l.category_id && visibleCategories.has(l.category_id))
-      .reduce((sum, l) => sum + l.budgeted, 0)
-    const totalExpensesBudgeted = allLines.expense
-      .filter(l => l.category_id && visibleCategories.has(l.category_id))
-      .reduce((sum, l) => sum + l.budgeted, 0)
-    return {
-      incomeBudgeted: totalIncomeBudgeted,
-      incomeActual: totalIncomeActual,
-      expensesBudgeted: totalExpensesBudgeted,
-      expensesActual: totalExpensesActual,
-      netActual: totalIncomeActual - totalExpensesActual,
-      netBudgeted: totalIncomeBudgeted - totalExpensesBudgeted,
+  // ── Budgeted totals (visible categories only) ────────────────────────────────
+  const budgetTotals = useMemo(() => {
+    let income = 0, expense = 0
+    for (const [idStr, val] of Object.entries(amounts)) {
+      const v = parseFloat(val)
+      if (isNaN(v)) continue
+      const cat = leafById.get(Number(idStr))
+      if (!cat || !visibleCategories.has(cat.id)) continue
+      if (cat.is_income) income += v
+      else expense += v
     }
-  }, [allLines, visibleCategories])
+    return { income, expense, net: income - expense }
+  }, [amounts, leafById, visibleCategories])
+
+  const summaryTiles = averages ? [
+    {
+      label: 'Income', budget: budgetTotals.income, isIncome: true,
+      avg3: averages.total_income_avg_3m, avg12: averages.total_income_avg_12m,
+    },
+    {
+      label: 'Expenses', budget: budgetTotals.expense, isIncome: false,
+      avg3: averages.total_expense_avg_3m, avg12: averages.total_expense_avg_12m,
+    },
+    {
+      label: 'Net', budget: budgetTotals.net, isIncome: true,
+      avg3: averages.total_income_avg_3m - averages.total_expense_avg_3m,
+      avg12: averages.total_income_avg_12m - averages.total_expense_avg_12m,
+    },
+  ] : []
+
+  const monthSelector = (className: string) => (
+    <select
+      value={`${year}-${month}`}
+      onChange={e => {
+        const [y, m] = e.target.value.split('-').map(Number)
+        setYear(y); setMonth(m)
+      }}
+      className={clsx('bg-surface-700 border border-white/[0.08] rounded-lg px-3 py-2 text-sm text-ink-100 focus:outline-none', className)}
+    >
+      {Array.from({ length: 5 }, (_, i) => now.year - 4 + i)
+        .reverse()
+        .map(y => {
+          const months = Array.from({ length: 12 }, (_, m) => m + 1)
+            .filter(m => y < now.year || m <= now.month)
+            .reverse()
+          if (months.length === 0) return null
+          return (
+            <optgroup key={y} label={String(y)}>
+              {months.map(m => (
+                <option key={`${y}-${m}`} value={`${y}-${m}`}>
+                  {`${y} - ${new Date(y, m - 1).toLocaleString('default', { month: 'long' })}`}
+                </option>
+              ))}
+            </optgroup>
+          )
+        })}
+    </select>
+  )
 
   return (
-    <div className="space-y-6 animate-slide-up">
+    <div className="space-y-5 animate-slide-up">
       <PageHeader
         title="Budget"
-        subtitle=""
+        subtitle={averages ? `Set targets vs. your ${averages.anchor_label} spend` : 'Set targets vs. your recent spend'}
         action={
           <div className="flex items-center gap-2">
-            <select
-              value={`${year}-${month}`}
-              onChange={e => {
-                const [y, m] = e.target.value.split('-').map(Number)
-                setYear(y)
-                setMonth(m)
-              }}
-              className="hidden md:block bg-surface-700 border border-white/[0.08] rounded-lg px-3 py-2 text-sm text-ink-100 focus:outline-none"
-            >
-              {Array.from({ length: 5 }, (_, i) => now.year - 4 + i)
-                .reverse()
-                .map(y => {
-                  const months = Array.from({ length: 12 }, (_, m) => m + 1)
-                    .filter(m => y < now.year || m <= now.month)
-                    .reverse()
-                  if (months.length === 0) return null
-                  return (
-                    <optgroup key={y} label={String(y)}>
-                      {months.map(m => (
-                        <option key={`${y}-${m}`} value={`${y}-${m}`}>
-                          {`${y} - ${new Date(y, m - 1).toLocaleString('default', { month: 'long' })}`}
-                        </option>
-                      ))}
-                    </optgroup>
-                  )
-                })}
-            </select>
-            <Button variant="secondary" size="sm" onClick={() => setShowCopy(true)}>
-              Copy Budget
-            </Button>
-            <Button variant="primary" size="sm" onClick={() => setShowEdit(true)}>
-              Edit Budget
-            </Button>
+            {monthSelector('hidden md:block')}
+            <Button variant="secondary" size="sm" onClick={() => setShowCopy(true)}>Copy Budget</Button>
           </div>
         }
-        extra={
-          <div className="flex justify-end md:hidden">
-          <select
-            value={`${year}-${month}`}
-            onChange={e => {
-              const [y, m] = e.target.value.split('-').map(Number)
-              setYear(y)
-              setMonth(m)
-            }}
-            className="bg-surface-700 border border-white/[0.08] rounded-lg px-3 py-2 text-sm text-ink-100 focus:outline-none"
-          >
-            {Array.from({ length: 5 }, (_, i) => now.year - 4 + i)
-              .reverse()
-              .map(y => {
-                const months = Array.from({ length: 12 }, (_, m) => m + 1)
-                  .filter(m => y < now.year || m <= now.month)
-                  .reverse()
-                if (months.length === 0) return null
-                return (
-                  <optgroup key={y} label={String(y)}>
-                    {months.map(m => (
-                      <option key={`${y}-${m}`} value={`${y}-${m}`}>
-                        {`${y} - ${new Date(y, m - 1).toLocaleString('default', { month: 'long' })}`}
-                      </option>
-                    ))}
-                  </optgroup>
-                )
-              })}
-          </select>
-          </div>
-        }
+        extra={<div className="flex justify-end md:hidden">{monthSelector('')}</div>}
       />
 
-      {/* Summary KPIs */}
-      {isLoading ? (
+      {isLoading || !averages ? (
         <div className="flex justify-center py-12"><Spinner size="lg" /></div>
       ) : (
         <>
-          {/* Mobile: Actual | Budgeted columns, Income / Expenses / Net rows */}
-          <div className="grid grid-cols-2 gap-4 lg:hidden">
-            <StatCard label="Income (Actual)"     value={totals.incomeActual}     positive wholeDollars />
-            <StatCard label="Income (Budgeted)"   value={totals.incomeBudgeted}   wholeDollars />
-            <StatCard label="Expenses (Actual)"   value={totals.expensesActual}   negative wholeDollars />
-            <StatCard label="Expenses (Budgeted)" value={totals.expensesBudgeted} wholeDollars />
-            <StatCard label="Net (Actual)"        value={totals.netActual}        format="signed" autoSign wholeDollars />
-            <StatCard label="Net (Budgeted)"      value={totals.netBudgeted}      format="signed" wholeDollars />
-          </div>
-          {/* Desktop: original layout */}
-          <div className="hidden lg:grid grid-cols-4 gap-4">
-            <StatCard label="Income (Actual)"     value={totals.incomeActual}     positive wholeDollars />
-            <StatCard label="Expenses (Actual)"   value={totals.expensesActual}   negative wholeDollars />
-            <StatCard label="Income (Budgeted)"   value={totals.incomeBudgeted}   wholeDollars />
-            <StatCard label="Expenses (Budgeted)" value={totals.expensesBudgeted} wholeDollars />
-          </div>
-          <div className="hidden lg:grid grid-cols-2 gap-4">
-            <StatCard label="Net (Actual)"   value={totals.netActual}   format="signed" autoSign wholeDollars />
-            <StatCard label="Net (Budgeted)" value={totals.netBudgeted} format="signed" wholeDollars />
-          </div>
-          {categorySections.map(section => {
-            const isIncome = section.groupName === 'Income'
-            return (
-              <Card key={section.groupName}>
-                <div className="flex items-center justify-between mb-1">
-                  <div className="flex items-center gap-2">
-                    <div className={clsx('w-2 h-2 rounded-full', isIncome ? 'bg-teal-400' : 'bg-rose-400')} />
-                    <h2 className="text-sm font-semibold text-ink-100">{section.groupName}</h2>
-                  </div>
-                  <span className={clsx('text-sm font-mono', isIncome ? 'text-teal-400' : 'text-rose-400')}>
-                    {formatCurrencyWhole(section.current)} / {formatCurrencyWhole(section.budgeted)}
-                  </span>
-                </div>
-                <div className="mb-3 text-2xs text-ink-400 text-right">Current / Budgeted</div>
-                <div>
-                  {section.lines.map(line => (
-                    <BudgetLineRow
-                      key={line.category_id ?? `${section.groupName}-${line.category_name}`}
-                      line={line}
-                      onClick={() => setEditLine(line)}
-                    />
-                  ))}
-                </div>
+          {/* Compact summary: budgeted totals vs. recent averages */}
+          <div className="grid grid-cols-3 gap-3">
+            {summaryTiles.map(t => (
+              <Card key={t.label} className="flex flex-col gap-1">
+                <span className="label">{t.label}</span>
+                <span className={clsx(
+                  'stat-value',
+                  t.label === 'Net'
+                    ? (t.budget >= 0 ? 'value-positive' : 'value-negative')
+                    : t.isIncome ? 'value-positive' : 'value-neutral',
+                )}>
+                  {formatCurrencyWhole(t.budget)}
+                </span>
+                <span className="text-2xs text-ink-400 font-mono">
+                  3M {formatCurrencyWhole(t.avg3)} · 12M {formatCurrencyWhole(t.avg12)}
+                </span>
               </Card>
-            )
-          })}
+            ))}
+          </div>
+
+          {/* Toolbar: manage categories + $ / +/- toggle */}
+          <div className="flex items-center justify-between gap-2">
+            <div className="relative">
+              <Button variant="secondary" size="sm" onClick={() => setShowManage(v => !v)}>
+                Show/hide categories ▾
+              </Button>
+              {showManage && categories && (
+                <ManageCategoriesPopover
+                  categories={categories}
+                  visible={visibleCategories}
+                  onToggle={handleToggleVisible}
+                  onClose={() => setShowManage(false)}
+                />
+              )}
+            </div>
+            <div className="inline-flex rounded-lg border border-white/[0.08] overflow-hidden text-xs">
+              <button
+                onClick={() => setShowDiff(false)}
+                className={clsx('px-3 py-1.5', !showDiff ? 'bg-surface-600 text-ink-100' : 'text-ink-400 hover:text-ink-200')}
+              >$</button>
+              <button
+                onClick={() => setShowDiff(true)}
+                className={clsx('px-3 py-1.5', showDiff ? 'bg-surface-600 text-ink-100' : 'text-ink-400 hover:text-ink-200')}
+              >+/−</button>
+            </div>
+          </div>
+
+          <Card className="overflow-x-auto">
+            <div className="min-w-[34rem]">
+              {/* Column header */}
+              <div className={clsx(GRID, 'pb-2 mb-1 border-b border-white/[0.06] text-2xs uppercase tracking-wide text-ink-400')}>
+                <span>Category</span>
+                <span className="text-right">Budget</span>
+                <span className="text-right">1M</span>
+                <span className="text-right">3M</span>
+                <span className="text-right">6M</span>
+                <span className="text-right">12M</span>
+              </div>
+
+              {sections.map(section => {
+                const isIncomeGroup = section.groupName === 'Income'
+                const subtotal = section.rows.reduce((acc, r) => {
+                  const b = r.editable && r.categoryId != null ? (parseFloat(amounts[r.categoryId] ?? '') || 0) : 0
+                  acc.budget += b
+                  acc.avg1 += r.avg1; acc.avg3 += r.avg3; acc.avg6 += r.avg6; acc.avg12 += r.avg12
+                  return acc
+                }, { budget: 0, avg1: 0, avg3: 0, avg6: 0, avg12: 0 })
+
+                return (
+                  <div key={section.groupName} className="py-2">
+                    <div className="flex items-center gap-2 mb-1.5">
+                      <div className={clsx('w-1.5 h-1.5 rounded-full', isIncomeGroup ? 'bg-teal-400' : 'bg-rose-400')} />
+                      <h3 className="text-xs font-semibold text-ink-200">{section.groupName}</h3>
+                    </div>
+
+                    {section.rows.map(row => {
+                      const budgetVal = row.categoryId != null ? (parseFloat(amounts[row.categoryId] ?? '') || 0) : 0
+                      return (
+                        <div key={row.key} className={clsx(GRID, 'py-1.5 border-b border-white/[0.03] last:border-0')}>
+                          <div className="flex items-center gap-1.5 min-w-0">
+                            <span className="text-sm text-ink-100 truncate">{row.name}</span>
+                            {savedCat === row.categoryId && (
+                              <span className="text-2xs text-teal-400 flex-shrink-0">✓</span>
+                            )}
+                          </div>
+                          {row.editable && row.categoryId != null ? (
+                            <input
+                              type="number"
+                              step="0.01"
+                              min="0"
+                              placeholder="—"
+                              value={amounts[row.categoryId] ?? ''}
+                              onFocus={() => setFocusedCat(row.categoryId!)}
+                              onChange={e => handleBudgetChange(row.categoryId!, e.target.value)}
+                              onBlur={() => handleBudgetBlur(row.categoryId!)}
+                              onWheel={e => (e.target as HTMLInputElement).blur()}
+                              className="w-full bg-surface-700 border border-white/[0.08] rounded-md px-2 py-1 text-sm font-mono text-ink-100 text-right focus:outline-none focus:border-amber-400/40 transition-colors"
+                            />
+                          ) : (
+                            <span className="text-right text-2xs text-ink-500 italic">Other</span>
+                          )}
+                          <span className="text-right text-sm font-mono"><AvgCell budget={budgetVal} avg={row.avg1} isIncome={row.isIncome} showDiff={showDiff} plain={!row.editable} /></span>
+                          <span className="text-right text-sm font-mono"><AvgCell budget={budgetVal} avg={row.avg3} isIncome={row.isIncome} showDiff={showDiff} plain={!row.editable} /></span>
+                          <span className="text-right text-sm font-mono"><AvgCell budget={budgetVal} avg={row.avg6} isIncome={row.isIncome} showDiff={showDiff} plain={!row.editable} /></span>
+                          <span className="text-right text-sm font-mono"><AvgCell budget={budgetVal} avg={row.avg12} isIncome={row.isIncome} showDiff={showDiff} plain={!row.editable} /></span>
+                        </div>
+                      )
+                    })}
+
+                    {/* Group subtotal */}
+                    <div className={clsx(GRID, 'pt-1.5 mt-1 border-t border-white/[0.06] text-2xs font-mono text-ink-400')}>
+                      <span className="uppercase tracking-wide">Subtotal</span>
+                      <span className="text-right text-ink-200">{formatCurrencyWhole(subtotal.budget)}</span>
+                      <span className="text-right">{formatCurrencyWhole(subtotal.avg1)}</span>
+                      <span className="text-right">{formatCurrencyWhole(subtotal.avg3)}</span>
+                      <span className="text-right">{formatCurrencyWhole(subtotal.avg6)}</span>
+                      <span className="text-right">{formatCurrencyWhole(subtotal.avg12)}</span>
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          </Card>
         </>
       )}
 
@@ -1012,36 +730,6 @@ export default function BudgetPage() {
           onClose={() => setShowCopy(false)}
         />
       )}
-
-      {showEdit && categories && (
-        <EditBudgetModal
-          year={year}
-          month={month}
-          incomeLines={allLines.income.filter(l => l.category_name.toLowerCase() !== 'uncategorized')}
-          expenseLines={allLines.expense.filter(l => l.category_name.toLowerCase() !== 'uncategorized')}
-          categories={categories}
-          visibleCategories={visibleCategories}
-          onClose={() => setShowEdit(false)}
-          onSaveVisibility={handleSaveVisibility}
-        />
-      )}
-
-      {editLine && editLine.category_id && (
-        <SetBudgetModal
-          line={editLine}
-          year={year}
-          month={month}
-          onClose={() => setEditLine(null)}
-        />
-      )}
     </div>
   )
 }
-
-
-
-
-
-
-
-

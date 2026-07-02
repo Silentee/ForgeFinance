@@ -7,7 +7,7 @@ import type {
   Category, CategoryCreate,
   Budget, BudgetCreate, BudgetUpdate,
   BudgetVisibleCategories, BudgetVisibleCategoriesUpsert,
-  BudgetReport, CashFlowReport, NetWorthHistory, SpendingTrendsReport, MonthlyTotalsReport, EquityHistoryReport,
+  BudgetReport, CashFlowReport, NetWorthHistory, SpendingTrendsReport, SpendingAveragesReport, MonthlyTotalsReport, EquityHistoryReport,
   DailySpendingData,
   ImportSource, CSVImportResult, CSVColumnMapping,
   BalanceSnapshot, BalanceSnapshotUpdate,
@@ -194,6 +194,11 @@ export const reportsApi = {
 
   spendingTrends: (params?: { months?: number; year?: number; month?: number; top_n?: number; account_ids?: string }) =>
     apiClient.get<SpendingTrendsReport>('/reports/spending-trends', { params }).then(r => r.data),
+
+  spendingAverages: (year: number, month: number, accountIds?: number[]) =>
+    apiClient.get<SpendingAveragesReport>(`/reports/spending-averages/${year}/${month}`, {
+      params: accountIds?.length ? { account_ids: accountIds.join(',') } : undefined,
+    }).then(r => r.data),
 
   monthlyTotals: (params?: { months?: number; year?: number; month?: number }) =>
     apiClient.get<MonthlyTotalsReport>('/reports/monthly-totals', { params }).then(r => r.data),

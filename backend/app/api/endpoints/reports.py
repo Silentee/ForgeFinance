@@ -22,6 +22,7 @@ from app.schemas.reports import (
     EquityHistoryReport,
     MonthlyTotalsReport,
     NetWorthHistory,
+    SpendingAveragesReport,
     SpendingTrendsReport,
 )
 from app.services.reporting import (
@@ -30,6 +31,7 @@ from app.services.reporting import (
     build_equity_history,
     build_monthly_totals,
     build_net_worth_history,
+    build_spending_averages,
     build_spending_trends,
     _get_annualized_contributions,
 )
@@ -139,6 +141,27 @@ def get_spending_trends(
     """
     account_id_list = _parse_account_ids(account_ids)
     return build_spending_trends(db, months, account_id_list, top_n, year, month)
+
+
+@router.get("/spending-averages/{year}/{month}", response_model=SpendingAveragesReport)
+def get_spending_averages(
+    year: int,
+    month: int,
+    account_ids: Optional[str] = Query(None, description="Comma-separated account IDs"),
+    db: Session = Depends(get_db),
+):
+    """
+    Per-category average monthly spend over trailing 1M/3M/6M/12M windows,
+    anchored to a budget month.
+
+    Windows include the selected month, except when it is the current calendar
+    month — then they end at the previous complete month. Each category's
+    monthly value uses budget-report sign conventions so the averages are
+    directly comparable to budget amounts.
+    """
+    _validate_year_month(year, month)
+    account_id_list = _parse_account_ids(account_ids)
+    return build_spending_averages(db, year, month, account_id_list)
 
 
 @router.get("/monthly-totals", response_model=MonthlyTotalsReport)

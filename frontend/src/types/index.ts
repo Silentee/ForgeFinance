@@ -304,6 +304,33 @@ export interface MonthlyTotalsReport {
   monthly_net_totals: number[]
 }
 
+export interface SpendingAverageLine {
+  category_id?: number
+  category_name: string
+  parent_category_name?: string
+  is_income: boolean
+  avg_1m: number
+  avg_3m: number
+  avg_6m: number
+  avg_12m: number
+}
+
+export interface SpendingAveragesReport {
+  year: number
+  month: number
+  anchor_label: string
+  income_lines: SpendingAverageLine[]
+  expense_lines: SpendingAverageLine[]
+  total_income_avg_1m: number
+  total_income_avg_3m: number
+  total_income_avg_6m: number
+  total_income_avg_12m: number
+  total_expense_avg_1m: number
+  total_expense_avg_3m: number
+  total_expense_avg_6m: number
+  total_expense_avg_12m: number
+}
+
 // ─── Equity History ──────────────────────────────────────────────────────────
 
 export interface EquityDataPoint {
