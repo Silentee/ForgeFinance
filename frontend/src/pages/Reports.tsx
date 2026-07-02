@@ -46,6 +46,29 @@ const ACCOUNT_TYPE_ORDER: AccountType[] = [
   'credit_card', 'mortgage', 'car_loan', 'student_loan', 'personal_loan', 'other_liability',
 ]
 
+// Budget progress bar with a marker showing where the budget line falls relative to spending.
+// Under budget: fill shows how far spent, marker pinned to the far right (budget = 100%).
+// Over budget: fill is full (red), marker slides left as the overage grows (budget / actual).
+function BudgetProgress({ pct }: { pct: number }) {
+  const fillPct = Math.min(100, pct)
+  const markerPct = pct <= 100 ? 100 : 10000 / pct
+  return (
+    <div className="relative flex-1">
+      <div className="h-1.5 rounded-full bg-white/[0.06] overflow-hidden">
+        <div
+          className={clsx('h-full rounded-full', pct > 120 ? 'bg-red-400' : pct > 102 ? 'bg-amber-400' : 'bg-emerald-400')}
+          style={{ width: `${fillPct}%` }}
+        />
+      </div>
+      {/* budget-target marker */}
+      <div
+        className="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 w-0.5 h-3 bg-ink-100/90 rounded-full pointer-events-none"
+        style={{ left: `${markerPct}%` }}
+      />
+    </div>
+  )
+}
+
 // Heckbert's "nice numbers" algorithm — picks a round step size (1/2/5/10 x a power of ten)
 // so axis ticks land on whole, easy-to-compare numbers instead of raw fractions of the range.
 const niceNum = (range: number, round: boolean): number => {
@@ -648,7 +671,7 @@ export default function ReportsPage() {
                               <tr>
                                 <th className="text-left text-ink-300 text-xs font-medium px-4 py-3 bg-surface-800">Category</th>
                                 <th className="text-right text-ink-300 text-xs font-medium px-4 py-3 bg-surface-800">This Month</th>
-                                <th className={clsx('text-ink-300 text-xs font-medium px-4 py-3 bg-surface-800', showDiff && 'text-right')}>{showDiff ? 'vs Budget' : 'Budget'}</th>
+                                <th className="text-ink-300 text-xs font-medium px-4 py-3 bg-surface-800">{showDiff ? 'vs Budget' : 'Budget'}</th>
                                 <th className="text-right text-ink-300 text-xs font-medium px-4 py-3 bg-surface-800">{showDiff ? 'vs 3M' : '3M Avg'}</th>
                                 <th className="text-right text-ink-300 text-xs font-medium px-4 py-3 bg-surface-800">{showDiff ? 'vs 6M' : '6M Avg'}</th>
                                 <th className="text-right text-ink-300 text-xs font-medium px-4 py-3 bg-surface-800">{showDiff ? 'vs 12M' : '12M Avg'}</th>
@@ -675,7 +698,7 @@ export default function ReportsPage() {
                         <tr className="border-b border-white/[0.06]">
                           <th className="text-left text-ink-300 text-xs font-medium px-4 py-3 sticky left-0 z-10 bg-surface-800">Category</th>
                           <th className="text-right text-ink-300 text-xs font-medium px-4 py-3">This Month</th>
-                          <th className={clsx('text-ink-300 text-xs font-medium px-4 py-3', showDiff && 'text-right')}>{showDiff ? 'vs Budget' : 'Budget'}</th>
+                          <th className="text-ink-300 text-xs font-medium px-4 py-3">{showDiff ? 'vs Budget' : 'Budget'}</th>
                           <th className="text-right text-ink-300 text-xs font-medium px-4 py-3">{showDiff ? 'vs 3M' : '3M Avg'}</th>
                           <th className="text-right text-ink-300 text-xs font-medium px-4 py-3">{showDiff ? 'vs 6M' : '6M Avg'}</th>
                           <th className="text-right text-ink-300 text-xs font-medium px-4 py-3">{showDiff ? 'vs 12M' : '12M Avg'}</th>
@@ -691,25 +714,18 @@ export default function ReportsPage() {
                             <tr className="border-b border-white/[0.08] bg-white/[0.03]">
                               <td className="px-4 py-3 font-medium text-ink-100 sticky left-0 z-10">Total Expenses</td>
                               <td className="px-4 py-3 text-right font-mono text-ink-100">{formatCurrencyWhole(budgetReport.total_expenses_actual)}</td>
-                              <td className={clsx('px-4 py-3', showDiff && 'text-right')}>
-                                {showDiff ? (
-                                  budgetReport.total_expenses_budgeted > 0 ? (() => {
-                                    const diff = budgetReport.total_expenses_actual - budgetReport.total_expenses_budgeted
-                                    return <span className={clsx('font-mono text-xs', diff > 0 ? 'text-red-400' : 'text-emerald-400')}>{formatCurrencySignedWhole(diff)}</span>
-                                  })() : <span className="text-ink-500">—</span>
-                                ) : (
-                                  budgetReport.total_expenses_budgeted > 0 ? (
-                                    <div className="flex items-center gap-2">
-                                      <div className="flex-1 h-1.5 rounded-full bg-white/[0.06] overflow-hidden">
-                                        <div
-                                          className={clsx('h-full rounded-full', (totalPct ?? 0) > 100 ? 'bg-red-400' : 'bg-amber-400')}
-                                          style={{ width: `${Math.min(100, totalPct ?? 0)}%` }}
-                                        />
-                                      </div>
+                              <td className="px-4 py-3">
+                                {budgetReport.total_expenses_budgeted > 0 ? (
+                                  <div className="flex items-center gap-2">
+                                    <BudgetProgress pct={totalPct ?? 0} />
+                                    {showDiff ? (() => {
+                                      const diff = budgetReport.total_expenses_actual - budgetReport.total_expenses_budgeted
+                                      return <span className={clsx('font-mono text-xs w-16 text-right flex-shrink-0', diff > 0 ? 'text-red-400' : 'text-emerald-400')}>{formatCurrencySignedWhole(diff)}</span>
+                                    })() : (
                                       <span className="font-mono text-ink-200 text-xs w-16 text-right flex-shrink-0">{formatCurrencyWhole(budgetReport.total_expenses_budgeted)}</span>
-                                    </div>
-                                  ) : <span className="text-ink-500">—</span>
-                                )}
+                                    )}
+                                  </div>
+                                ) : <span className="text-ink-500">—</span>}
                               </td>
                               {(() => {
                                 const met = spendingTrends?.monthly_expense_totals ?? []
@@ -769,25 +785,18 @@ export default function ReportsPage() {
                                 {group.parent}
                               </td>
                               <td className="px-4 py-2.5 text-right font-mono text-ink-100">{formatCurrencyWhole(group.actual)}</td>
-                              <td className={clsx('px-4 py-2.5', showDiff && 'text-right')}>
-                                {showDiff ? (
-                                  group.budgeted > 0 ? (() => {
-                                    const diff = group.actual - group.budgeted
-                                    return <span className={clsx('font-mono text-xs', diff > 0 ? 'text-red-400' : 'text-emerald-400')}>{formatCurrencySignedWhole(diff)}</span>
-                                  })() : <span className="text-ink-500">—</span>
-                                ) : (
-                                  group.budgeted > 0 ? (
-                                    <div className="flex items-center gap-2">
-                                      <div className="flex-1 h-1.5 rounded-full bg-white/[0.06] overflow-hidden">
-                                        <div
-                                          className={clsx('h-full rounded-full', (group.pctUsed ?? 0) > 100 ? 'bg-red-400' : 'bg-amber-400')}
-                                          style={{ width: `${Math.min(100, group.pctUsed ?? 0)}%` }}
-                                        />
-                                      </div>
+                              <td className="px-4 py-2.5">
+                                {group.budgeted > 0 ? (
+                                  <div className="flex items-center gap-2">
+                                    <BudgetProgress pct={group.pctUsed ?? 0} />
+                                    {showDiff ? (() => {
+                                      const diff = group.actual - group.budgeted
+                                      return <span className={clsx('font-mono text-xs w-16 text-right flex-shrink-0', diff > 0 ? 'text-red-400' : 'text-emerald-400')}>{formatCurrencySignedWhole(diff)}</span>
+                                    })() : (
                                       <span className="font-mono text-ink-200 text-xs w-16 text-right flex-shrink-0">{formatCurrencyWhole(group.budgeted)}</span>
-                                    </div>
-                                  ) : <span className="text-ink-500">—</span>
-                                )}
+                                    )}
+                                  </div>
+                                ) : <span className="text-ink-500">—</span>}
                               </td>
                               <td className={clsx('px-4 py-2.5 text-right font-mono text-xs', group.avg3 > 0 ? (showDiff ? (group.actual - group.avg3 > 0 ? 'text-red-400' : 'text-emerald-400') : (group.actual > group.avg3 ? 'text-red-400' : 'text-emerald-400')) : 'text-ink-400')}>
                                 {group.avg3 > 0 ? (showDiff ? formatCurrencySignedWhole(group.actual - group.avg3) : formatCurrencyWhole(group.avg3)) : '—'}
@@ -810,25 +819,18 @@ export default function ReportsPage() {
                                   {child.name}
                                 </td>
                                 <td className="px-4 py-2 text-right font-mono text-ink-200">{formatCurrencyWhole(child.actual)}</td>
-                                <td className={clsx('px-4 py-2', showDiff && 'text-right')}>
-                                  {showDiff ? (
-                                    child.budgeted > 0 ? (() => {
-                                      const diff = child.actual - child.budgeted
-                                      return <span className={clsx('font-mono text-xs', diff > 0 ? 'text-red-400' : 'text-emerald-400')}>{formatCurrencySignedWhole(diff)}</span>
-                                    })() : <span className="text-ink-500">—</span>
-                                  ) : (
-                                    child.budgeted > 0 ? (
-                                      <div className="flex items-center gap-2">
-                                        <div className="flex-1 h-1.5 rounded-full bg-white/[0.06] overflow-hidden">
-                                          <div
-                                            className={clsx('h-full rounded-full', (child.pctUsed ?? 0) > 100 ? 'bg-red-400' : 'bg-amber-400')}
-                                            style={{ width: `${Math.min(100, child.pctUsed ?? 0)}%` }}
-                                          />
-                                        </div>
+                                <td className="px-4 py-2">
+                                  {child.budgeted > 0 ? (
+                                    <div className="flex items-center gap-2">
+                                      <BudgetProgress pct={child.pctUsed ?? 0} />
+                                      {showDiff ? (() => {
+                                        const diff = child.actual - child.budgeted
+                                        return <span className={clsx('font-mono text-xs w-16 text-right flex-shrink-0', diff > 0 ? 'text-red-400' : 'text-emerald-400')}>{formatCurrencySignedWhole(diff)}</span>
+                                      })() : (
                                         <span className="font-mono text-ink-300 text-xs w-16 text-right flex-shrink-0">{formatCurrencyWhole(child.budgeted)}</span>
-                                      </div>
-                                    ) : <span className="text-ink-500">—</span>
-                                  )}
+                                      )}
+                                    </div>
+                                  ) : <span className="text-ink-500">—</span>}
                                 </td>
                                 <td className={clsx('px-4 py-2 text-right font-mono text-xs', child.avg3 > 0 ? (showDiff ? (child.actual - child.avg3 > 0 ? 'text-red-400' : 'text-emerald-400') : (child.actual > child.avg3 ? 'text-red-400' : 'text-emerald-400')) : 'text-ink-400')}>
                                   {child.avg3 > 0 ? (showDiff ? formatCurrencySignedWhole(child.actual - child.avg3) : formatCurrencyWhole(child.avg3)) : '—'}
