@@ -999,7 +999,7 @@ export default function AccountsPage() {
 
               {sortedAssetTypes.length === 0 ? (
                 <p className="px-5 py-6 text-sm text-ink-400 text-center">No liquid accounts</p>
-              ) : sortedAssetTypes.map((type, idx) => {
+              ) : sortedAssetTypes.map((type) => {
                 const accts = assetGroups[type]
                 const typeTotal = accts.filter(a => a.include_in_net_worth).reduce((s, a) => s + (a.current_balance ?? 0), 0)
                 const isCollapsed = collapsedTypes.has(type)
@@ -1010,7 +1010,7 @@ export default function AccountsPage() {
                       onClick={() => toggleTypeCollapsed(type)}
                       className={clsx(
                         'w-full flex items-center justify-between px-5 py-2 bg-surface-800/50 hover:bg-surface-800 transition-colors',
-                        idx > 0 && 'border-t border-white/[0.04]'
+                        'border-t border-white/[0.2]'
                       )}
                     >
                       <div className="flex items-center gap-2">
@@ -1069,7 +1069,7 @@ export default function AccountsPage() {
                 </span>
               </div>
 
-              {sortedLiabilityTypes.map((type, idx) => {
+              {sortedLiabilityTypes.map((type) => {
                 const accts = liabilityGroups[type]
                 const typeTotal = accts.filter(a => a.include_in_net_worth).reduce((s, a) => s + (a.current_balance ?? 0), 0)
                 const isCollapsed = collapsedTypes.has(type)
@@ -1080,7 +1080,7 @@ export default function AccountsPage() {
                       onClick={() => toggleTypeCollapsed(type)}
                       className={clsx(
                         'w-full flex items-center justify-between px-5 py-2 bg-surface-800/50 hover:bg-surface-800 transition-colors',
-                        idx > 0 && 'border-t border-white/[0.04]'
+                        'border-t border-white/[0.2]'
                       )}
                     >
                       <div className="flex items-center gap-2">
