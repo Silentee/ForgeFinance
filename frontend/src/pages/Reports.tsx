@@ -755,12 +755,15 @@ export default function ReportsPage() {
                           )
                         })()}
 
-                        {spendingRows.filter(group => showAllCategories || group.actual > 0).map(group => (
+                        {spendingRows.filter(group => showAllCategories || group.actual > 0).map(group => {
+                          const groupExpanded = !isGroupCollapsed(group.parent)
+                          const visibleChildren = group.children.filter(child => showAllCategories || child.actual > 0)
+                          return (
                           <>
                             {/* Parent group header */}
                             <tr
                               key={`group-${group.parent}`}
-                              className="bg-white/[0.02] cursor-pointer hover:bg-white/[0.04] transition-colors"
+                              className="bg-white/[0.02] cursor-pointer hover:bg-white/[0.04] transition-colors border-t border-white/[0.12]"
                               onClick={() => setCollapsedGroups(prev => {
                                 if (prev === 'all') {
                                   // Expand just this group: create set of all groups except this one
@@ -784,9 +787,9 @@ export default function ReportsPage() {
                                 )}
                                 {group.parent}
                               </td>
-                              <td className="px-4 py-2.5 text-right font-mono text-ink-100">{formatCurrencyWhole(group.actual)}</td>
+                              <td className="px-4 py-2.5 text-right font-mono text-ink-100">{groupExpanded ? null : formatCurrencyWhole(group.actual)}</td>
                               <td className="px-4 py-2.5">
-                                {group.budgeted > 0 ? (
+                                {groupExpanded ? null : (group.budgeted > 0 ? (
                                   <div className="flex items-center gap-2">
                                     <BudgetProgress pct={group.pctUsed ?? 0} />
                                     {showDiff ? (() => {
@@ -796,21 +799,21 @@ export default function ReportsPage() {
                                       <span className="font-mono text-ink-200 text-xs w-16 text-right flex-shrink-0">{formatCurrencyWhole(group.budgeted)}</span>
                                     )}
                                   </div>
-                                ) : <span className="text-ink-500">—</span>}
+                                ) : <span className="text-ink-500">—</span>)}
                               </td>
-                              <td className={clsx('px-4 py-2.5 text-right font-mono text-xs', group.avg3 > 0 ? (showDiff ? (group.actual - group.avg3 > 0 ? 'text-red-400' : 'text-emerald-400') : (group.actual > group.avg3 ? 'text-red-400' : 'text-emerald-400')) : 'text-ink-400')}>
-                                {group.avg3 > 0 ? (showDiff ? formatCurrencySignedWhole(group.actual - group.avg3) : formatCurrencyWhole(group.avg3)) : '—'}
+                              <td className={clsx('px-4 py-2.5 text-right font-mono text-xs', groupExpanded ? '' : (group.avg3 > 0 ? (showDiff ? (group.actual - group.avg3 > 0 ? 'text-red-400' : 'text-emerald-400') : (group.actual > group.avg3 ? 'text-red-400' : 'text-emerald-400')) : 'text-ink-400'))}>
+                                {groupExpanded ? null : (group.avg3 > 0 ? (showDiff ? formatCurrencySignedWhole(group.actual - group.avg3) : formatCurrencyWhole(group.avg3)) : '—')}
                               </td>
-                              <td className={clsx('px-4 py-2.5 text-right font-mono text-xs', group.avg6 > 0 ? (showDiff ? (group.actual - group.avg6 > 0 ? 'text-red-400' : 'text-emerald-400') : (group.actual > group.avg6 ? 'text-red-400' : 'text-emerald-400')) : 'text-ink-400')}>
-                                {group.avg6 > 0 ? (showDiff ? formatCurrencySignedWhole(group.actual - group.avg6) : formatCurrencyWhole(group.avg6)) : '—'}
+                              <td className={clsx('px-4 py-2.5 text-right font-mono text-xs', groupExpanded ? '' : (group.avg6 > 0 ? (showDiff ? (group.actual - group.avg6 > 0 ? 'text-red-400' : 'text-emerald-400') : (group.actual > group.avg6 ? 'text-red-400' : 'text-emerald-400')) : 'text-ink-400'))}>
+                                {groupExpanded ? null : (group.avg6 > 0 ? (showDiff ? formatCurrencySignedWhole(group.actual - group.avg6) : formatCurrencyWhole(group.avg6)) : '—')}
                               </td>
-                              <td className={clsx('px-4 py-2.5 text-right font-mono text-xs', group.avg12 > 0 ? (showDiff ? (group.actual - group.avg12 > 0 ? 'text-red-400' : 'text-emerald-400') : (group.actual > group.avg12 ? 'text-red-400' : 'text-emerald-400')) : 'text-ink-400')}>
-                                {group.avg12 > 0 ? (showDiff ? formatCurrencySignedWhole(group.actual - group.avg12) : formatCurrencyWhole(group.avg12)) : '—'}
+                              <td className={clsx('px-4 py-2.5 text-right font-mono text-xs', groupExpanded ? '' : (group.avg12 > 0 ? (showDiff ? (group.actual - group.avg12 > 0 ? 'text-red-400' : 'text-emerald-400') : (group.actual > group.avg12 ? 'text-red-400' : 'text-emerald-400')) : 'text-ink-400'))}>
+                                {groupExpanded ? null : (group.avg12 > 0 ? (showDiff ? formatCurrencySignedWhole(group.actual - group.avg12) : formatCurrencyWhole(group.avg12)) : '—')}
                               </td>
                             </tr>
 
                             {/* Child category rows */}
-                            {!isGroupCollapsed(group.parent) && group.children.filter(child => showAllCategories || child.actual > 0).map(child => (
+                            {groupExpanded && visibleChildren.map((child) => (
                               <tr key={`child-${child.name}`} className="border-t border-white/[0.03]">
                                 <td className="px-4 py-2 pl-10 text-ink-300 sticky left-0 z-10 bg-surface-800">
                                   {pieColorMap.has(child.name) && (
@@ -844,7 +847,8 @@ export default function ReportsPage() {
                               </tr>
                             ))}
                           </>
-                        ))}
+                          )
+                        })}
                       </tbody>
                     </table>
                   </div>
