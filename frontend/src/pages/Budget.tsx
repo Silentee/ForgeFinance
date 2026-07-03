@@ -526,8 +526,8 @@ export default function BudgetPage() {
   }, [sections, amounts])
 
   const summaryTiles = averages ? [
-    { label: 'Income', budget: grandTotals.income.budget, isIncome: true },
-    { label: 'Expenses', budget: grandTotals.expense.budget, isIncome: false },
+    { label: 'Budgeted Income', budget: grandTotals.income.budget, isIncome: true },
+    { label: 'Budgeted Expenses', budget: grandTotals.expense.budget, isIncome: false },
     { label: 'Net', budget: grandTotals.net.budget, isIncome: true },
   ] : []
 
