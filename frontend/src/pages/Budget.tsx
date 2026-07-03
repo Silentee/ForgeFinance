@@ -648,15 +648,29 @@ export default function BudgetPage() {
             ))}
           </div>
 
-          {/* Toolbar: select-categories toggle + $ / +/- toggle */}
+          {/* Toolbar: select-categories toggle + collapse/expand + $ / +/- toggle */}
           <div className="flex items-center justify-between gap-2">
-            <Button
-              variant={selectMode ? 'primary' : 'secondary'}
-              size="sm"
-              onClick={() => setSelectMode(v => !v)}
-            >
-              {selectMode ? 'Done selecting' : 'Select budget categories'}
-            </Button>
+            <div className="flex items-center gap-2">
+              <Button
+                variant={selectMode ? 'primary' : 'secondary'}
+                size="sm"
+                onClick={() => setSelectMode(v => !v)}
+              >
+                {selectMode ? 'Done selecting' : 'Select budget categories'}
+              </Button>
+              <button
+                onClick={() => setCollapsedSections(new Set())}
+                className="px-3 py-1.5 rounded-lg text-xs font-medium border bg-surface-700 border-white/[0.08] text-ink-300 hover:text-ink-200 transition-colors"
+              >
+                Expand All
+              </button>
+              <button
+                onClick={() => setCollapsedSections(new Set((selectMode ? selectSections : sections).map(s => s.groupName)))}
+                className="px-3 py-1.5 rounded-lg text-xs font-medium border bg-surface-700 border-white/[0.08] text-ink-300 hover:text-ink-200 transition-colors"
+              >
+                Collapse All
+              </button>
+            </div>
             {!selectMode && (
               <div className="inline-flex rounded-lg border border-white/[0.08] overflow-hidden text-xs">
                 <button

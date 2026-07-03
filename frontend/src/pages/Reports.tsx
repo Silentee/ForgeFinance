@@ -561,7 +561,20 @@ export default function ReportsPage() {
           {/* Header with month/year selector */}
           <Card padding={false}>
             <div className="flex items-center justify-between p-5">
-              <div></div>
+              <div className="flex gap-2 items-center">
+                <button
+                  onClick={() => setCollapsedGroups(new Set())}
+                  className="px-3 py-1.5 rounded-lg text-xs font-medium border bg-surface-700 border-white/[0.08] text-ink-300 hover:text-ink-200 transition-colors"
+                >
+                  Expand All
+                </button>
+                <button
+                  onClick={() => setCollapsedGroups('all')}
+                  className="px-3 py-1.5 rounded-lg text-xs font-medium border bg-surface-700 border-white/[0.08] text-ink-300 hover:text-ink-200 transition-colors"
+                >
+                  Collapse All
+                </button>
+              </div>
               <div className="flex gap-2 items-center">
                 <button
                   onClick={() => setShowAllCategories(v => !v)}
