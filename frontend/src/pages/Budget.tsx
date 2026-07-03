@@ -624,10 +624,10 @@ export default function BudgetPage() {
             </p>
           )}
 
-          <Card className="overflow-x-auto">
+          <Card>
             <div className="min-w-[34rem]">
-              {/* Column header */}
-              <div className={clsx(GRID, 'pb-2 mb-1 border-b border-white/[0.06] text-xs uppercase tracking-wide text-ink-300')}>
+              {/* Column header — sticks just below the page title bar as the page scrolls */}
+              <div className={clsx(GRID, 'sticky top-[calc(var(--page-header-height,0px)_-_1px)] z-10 -mx-5 px-5 bg-surface-800 pb-2 pt-3 border-b border-white/[0.06] text-xs uppercase tracking-wide text-ink-300')}>
                 <span>Category</span>
                 <span className="text-right">Budget</span>
                 <span className="text-right">1M</span>
