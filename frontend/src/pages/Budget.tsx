@@ -106,67 +106,6 @@ function AvgCell({
   return <span className={color}>{avg > 0 ? formatCurrencyWhole(avg) : '—'}</span>
 }
 
-// ── Manage-categories popover (replaces the old Edit Budget dialog's checkboxes) ─
-
-function ManageCategoriesPopover({
-  categories, visible, onToggle, onClose,
-}: {
-  categories: Category[]
-  visible: Set<number>
-  onToggle: (catId: number) => void
-  onClose: () => void
-}) {
-  const parents = useMemo(
-    () => [...categories].filter(c => c.children.length > 0).sort((a, b) => {
-      const aIdx = GROUP_ORDER.indexOf(a.name)
-      const bIdx = GROUP_ORDER.indexOf(b.name)
-      return (aIdx === -1 ? 999 : aIdx) - (bIdx === -1 ? 999 : bIdx)
-    }),
-    [categories],
-  )
-
-  return (
-    <>
-      <div className="fixed inset-0 z-40" onClick={onClose} />
-      <div className="absolute left-0 top-full mt-2 z-50 w-72 max-w-[calc(100vw-2rem)] max-h-[70vh] overflow-y-auto rounded-xl border border-white/[0.08] bg-surface-800 shadow-xl p-4 space-y-4">
-        <p className="text-2xs text-ink-400">
-          Choose which categories to budget for this month. Unchecked categories roll into “Other”.
-        </p>
-        {parents.map(parent => {
-          const children = sortCategoryChildren(parent.name, parent.children)
-            .filter(c => c.name.toLowerCase() !== 'uncategorized')
-          if (children.length === 0) return null
-          return (
-            <div key={parent.id}>
-              <h4 className={clsx(
-                'text-2xs font-medium uppercase tracking-wide mb-1.5',
-                parent.is_income ? 'text-teal-400' : 'text-rose-400',
-              )}>
-                {parent.name}
-              </h4>
-              <div className="space-y-1">
-                {children.map(child => (
-                  <label key={child.id} className="flex items-center gap-2 text-sm cursor-pointer py-0.5">
-                    <input
-                      type="checkbox"
-                      checked={visible.has(child.id)}
-                      onChange={() => onToggle(child.id)}
-                      className="accent-amber-400 flex-shrink-0"
-                    />
-                    <span className={visible.has(child.id) ? 'text-ink-100' : 'text-ink-400'}>
-                      {child.name}
-                    </span>
-                  </label>
-                ))}
-              </div>
-            </div>
-          )
-        })}
-      </div>
-    </>
-  )
-}
-
 // ── Copy budget between months (unchanged behavior) ──────────────────────────
 
 function CopyBudgetModal({
@@ -295,7 +234,7 @@ export default function BudgetPage() {
   const [year, setYear] = useState(now.year)
   const [month, setMonth] = useState(now.month)
   const [showCopy, setShowCopy] = useState(false)
-  const [showManage, setShowManage] = useState(false)
+  const [selectMode, setSelectMode] = useState(false)
   const [showDiff, setShowDiff] = useState(false)
   const [visibleCategories, setVisibleCategories] = useState<Set<number>>(new Set())
   const [autoCarryDone, setAutoCarryDone] = useState<Set<string>>(new Set())
@@ -519,6 +458,43 @@ export default function BudgetPage() {
       .filter(s => s.rows.length > 0)
   }, [categories, avgByCat, visibleCategories])
 
+  // ── Every leaf category, grouped — used by the "select categories" mode ──────
+  // Independent of visibleCategories so toggling a checkbox doesn't rebuild it;
+  // the checked state is read from visibleCategories at render time.
+  const selectSections = useMemo<Section[]>(() => {
+    if (!categories) return []
+
+    const parents = [...categories].filter(c => c.children.length > 0).sort((a, b) => {
+      const aIdx = GROUP_ORDER.indexOf(a.name)
+      const bIdx = GROUP_ORDER.indexOf(b.name)
+      return (aIdx === -1 ? 999 : aIdx) - (bIdx === -1 ? 999 : bIdx)
+    })
+
+    const grouped = new Map<string, BudgetRow[]>()
+    GROUP_ORDER.forEach(g => grouped.set(g, []))
+
+    for (const parent of parents) {
+      for (const child of sortCategoryChildren(parent.name, parent.children)) {
+        if (child.name.toLowerCase() === 'uncategorized') continue
+        const line = avgByCat.get(child.id)
+        grouped.get(parent.name)?.push({
+          key: String(child.id),
+          categoryId: child.id,
+          name: child.name,
+          isIncome: child.is_income,
+          parentName: parent.name,
+          editable: true,
+          avg1: line?.avg_1m ?? 0, avg3: line?.avg_3m ?? 0,
+          avg6: line?.avg_6m ?? 0, avg12: line?.avg_12m ?? 0,
+        })
+      }
+    }
+
+    return GROUP_ORDER
+      .map(groupName => ({ groupName, rows: grouped.get(groupName) ?? [] }))
+      .filter(s => s.rows.length > 0)
+  }, [categories, avgByCat])
+
   // ── Budgeted totals (visible categories only) ────────────────────────────────
   const budgetTotals = useMemo(() => {
     let income = 0, expense = 0
@@ -615,32 +591,35 @@ export default function BudgetPage() {
             ))}
           </div>
 
-          {/* Toolbar: manage categories + $ / +/- toggle */}
+          {/* Toolbar: select-categories toggle + $ / +/- toggle */}
           <div className="flex items-center justify-between gap-2">
-            <div className="relative">
-              <Button variant="secondary" size="sm" onClick={() => setShowManage(v => !v)}>
-                Show/hide categories ▾
-              </Button>
-              {showManage && categories && (
-                <ManageCategoriesPopover
-                  categories={categories}
-                  visible={visibleCategories}
-                  onToggle={handleToggleVisible}
-                  onClose={() => setShowManage(false)}
-                />
-              )}
-            </div>
-            <div className="inline-flex rounded-lg border border-white/[0.08] overflow-hidden text-xs">
-              <button
-                onClick={() => setShowDiff(false)}
-                className={clsx('px-3 py-1.5', !showDiff ? 'bg-surface-600 text-ink-100' : 'text-ink-400 hover:text-ink-200')}
-              >$</button>
-              <button
-                onClick={() => setShowDiff(true)}
-                className={clsx('px-3 py-1.5', showDiff ? 'bg-surface-600 text-ink-100' : 'text-ink-400 hover:text-ink-200')}
-              >+/−</button>
-            </div>
+            <Button
+              variant={selectMode ? 'primary' : 'secondary'}
+              size="sm"
+              onClick={() => setSelectMode(v => !v)}
+            >
+              {selectMode ? 'Done selecting' : 'Select budget categories'}
+            </Button>
+            {!selectMode && (
+              <div className="inline-flex rounded-lg border border-white/[0.08] overflow-hidden text-xs">
+                <button
+                  onClick={() => setShowDiff(false)}
+                  className={clsx('px-3 py-1.5', !showDiff ? 'bg-surface-600 text-ink-100' : 'text-ink-400 hover:text-ink-200')}
+                >$</button>
+                <button
+                  onClick={() => setShowDiff(true)}
+                  className={clsx('px-3 py-1.5', showDiff ? 'bg-surface-600 text-ink-100' : 'text-ink-400 hover:text-ink-200')}
+                >+/−</button>
+              </div>
+            )}
           </div>
+
+          {selectMode && (
+            <p className="text-2xs text-ink-400 -mt-2">
+              Check the categories to budget for this month. Averages show recent spend to help you decide;
+              unchecked categories roll into “Other”.
+            </p>
+          )}
 
           <Card className="overflow-x-auto">
             <div className="min-w-[34rem]">
@@ -654,7 +633,7 @@ export default function BudgetPage() {
                 <span className="text-right">12M</span>
               </div>
 
-              {sections.map(section => {
+              {(selectMode ? selectSections : sections).map(section => {
                 const isIncomeGroup = section.groupName === 'Income'
                 const subtotal = section.rows.reduce((acc, r) => {
                   const b = r.editable && r.categoryId != null ? (parseFloat(amounts[r.categoryId] ?? '') || 0) : 0
@@ -672,6 +651,30 @@ export default function BudgetPage() {
 
                     {section.rows.map(row => {
                       const budgetVal = row.categoryId != null ? (parseFloat(amounts[row.categoryId] ?? '') || 0) : 0
+
+                      // Selection mode: checkbox + name, current budget, and raw averages.
+                      if (selectMode && row.categoryId != null) {
+                        const checked = visibleCategories.has(row.categoryId)
+                        return (
+                          <label key={row.key} className={clsx(GRID, 'py-1.5 border-b border-white/[0.03] last:border-0 cursor-pointer')}>
+                            <div className="flex items-center gap-2 min-w-0">
+                              <input
+                                type="checkbox"
+                                checked={checked}
+                                onChange={() => handleToggleVisible(row.categoryId!)}
+                                className="accent-amber-400 flex-shrink-0"
+                              />
+                              <span className={clsx('text-sm truncate', checked ? 'text-ink-100' : 'text-ink-400')}>{row.name}</span>
+                            </div>
+                            <span className="text-right text-xs font-mono text-ink-500">{budgetVal > 0 ? formatCurrencyWhole(budgetVal) : '—'}</span>
+                            <span className="text-right text-sm font-mono"><AvgCell budget={0} avg={row.avg1} isIncome={row.isIncome} showDiff={false} plain /></span>
+                            <span className="text-right text-sm font-mono"><AvgCell budget={0} avg={row.avg3} isIncome={row.isIncome} showDiff={false} plain /></span>
+                            <span className="text-right text-sm font-mono"><AvgCell budget={0} avg={row.avg6} isIncome={row.isIncome} showDiff={false} plain /></span>
+                            <span className="text-right text-sm font-mono"><AvgCell budget={0} avg={row.avg12} isIncome={row.isIncome} showDiff={false} plain /></span>
+                          </label>
+                        )
+                      }
+
                       return (
                         <div key={row.key} className={clsx(GRID, 'py-1.5 border-b border-white/[0.03] last:border-0')}>
                           <div className="flex items-center gap-1.5 min-w-0">
@@ -704,15 +707,17 @@ export default function BudgetPage() {
                       )
                     })}
 
-                    {/* Group subtotal */}
-                    <div className={clsx(GRID, 'pt-1.5 mt-1 border-t border-white/[0.06] text-xs font-mono text-ink-300')}>
-                      <span className="uppercase tracking-wide">Subtotal</span>
-                      <span className="text-right text-ink-100">{formatCurrencyWhole(subtotal.budget)}</span>
-                      <span className="text-right">{formatCurrencyWhole(subtotal.avg1)}</span>
-                      <span className="text-right">{formatCurrencyWhole(subtotal.avg3)}</span>
-                      <span className="text-right">{formatCurrencyWhole(subtotal.avg6)}</span>
-                      <span className="text-right">{formatCurrencyWhole(subtotal.avg12)}</span>
-                    </div>
+                    {/* Group subtotal (hidden while selecting categories) */}
+                    {!selectMode && (
+                      <div className={clsx(GRID, 'pt-1.5 mt-1 border-t border-white/[0.06] text-xs font-mono text-ink-300')}>
+                        <span className="uppercase tracking-wide">Subtotal</span>
+                        <span className="text-right text-ink-100">{formatCurrencyWhole(subtotal.budget)}</span>
+                        <span className="text-right">{formatCurrencyWhole(subtotal.avg1)}</span>
+                        <span className="text-right">{formatCurrencyWhole(subtotal.avg3)}</span>
+                        <span className="text-right">{formatCurrencyWhole(subtotal.avg6)}</span>
+                        <span className="text-right">{formatCurrencyWhole(subtotal.avg12)}</span>
+                      </div>
+                    )}
                   </div>
                 )
               })}
