@@ -582,7 +582,6 @@ export default function BudgetPage() {
     <div className="space-y-5 animate-slide-up">
       <PageHeader
         title="Budget"
-        subtitle={averages ? `Set targets vs. your ${averages.anchor_label} spend` : 'Set targets vs. your recent spend'}
         action={
           <div className="flex items-center gap-2">
             {monthSelector('hidden md:block')}
@@ -609,7 +608,7 @@ export default function BudgetPage() {
                 )}>
                   {formatCurrencyWhole(t.budget)}
                 </span>
-                <span className="text-2xs text-ink-400 font-mono">
+                <span className="text-xs text-ink-300 font-mono">
                   3M {formatCurrencyWhole(t.avg3)} · 12M {formatCurrencyWhole(t.avg12)}
                 </span>
               </Card>
@@ -646,7 +645,7 @@ export default function BudgetPage() {
           <Card className="overflow-x-auto">
             <div className="min-w-[34rem]">
               {/* Column header */}
-              <div className={clsx(GRID, 'pb-2 mb-1 border-b border-white/[0.06] text-2xs uppercase tracking-wide text-ink-400')}>
+              <div className={clsx(GRID, 'pb-2 mb-1 border-b border-white/[0.06] text-xs uppercase tracking-wide text-ink-300')}>
                 <span>Category</span>
                 <span className="text-right">Budget</span>
                 <span className="text-right">1M</span>
@@ -706,9 +705,9 @@ export default function BudgetPage() {
                     })}
 
                     {/* Group subtotal */}
-                    <div className={clsx(GRID, 'pt-1.5 mt-1 border-t border-white/[0.06] text-2xs font-mono text-ink-400')}>
+                    <div className={clsx(GRID, 'pt-1.5 mt-1 border-t border-white/[0.06] text-xs font-mono text-ink-300')}>
                       <span className="uppercase tracking-wide">Subtotal</span>
-                      <span className="text-right text-ink-200">{formatCurrencyWhole(subtotal.budget)}</span>
+                      <span className="text-right text-ink-100">{formatCurrencyWhole(subtotal.budget)}</span>
                       <span className="text-right">{formatCurrencyWhole(subtotal.avg1)}</span>
                       <span className="text-right">{formatCurrencyWhole(subtotal.avg3)}</span>
                       <span className="text-right">{formatCurrencyWhole(subtotal.avg6)}</span>
