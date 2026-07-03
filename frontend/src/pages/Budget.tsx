@@ -641,8 +641,11 @@ export default function BudgetPage() {
                 <TotalRow label="Net" t={grandTotals.net} className="py-2" />
               )}
 
-              {(selectMode ? selectSections : sections).map(section => {
+              {(selectMode ? selectSections : sections).map((section, i, arr) => {
                 const isIncomeGroup = section.groupName === 'Income'
+                // The first expense section (right after Income) gets a heavier
+                // divider so the income block reads as clearly separate.
+                const isFirstExpense = !isIncomeGroup && arr[i - 1]?.groupName === 'Income'
                 const subtotal = section.rows.reduce((acc, r) => {
                   const b = r.editable && r.categoryId != null ? (parseFloat(amounts[r.categoryId] ?? '') || 0) : 0
                   acc.budget += b
@@ -653,7 +656,14 @@ export default function BudgetPage() {
                 const collapsed = collapsedSections.has(section.groupName)
 
                 return (
-                  <div key={section.groupName} className="py-2 border-t border-white/[0.06]">
+                  <div
+                    key={section.groupName}
+                    className={clsx(
+                      'py-2',
+                      isIncomeGroup && 'bg-teal-500/[0.03]',
+                      (isIncomeGroup || isFirstExpense) ? 'border-t-2 border-white/[0.12] mt-1' : 'border-t border-white/[0.06]',
+                    )}
+                  >
                     <button
                       type="button"
                       onClick={() => toggleSection(section.groupName)}
