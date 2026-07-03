@@ -91,7 +91,7 @@ function AvgCell({
     const diff = budget - avg
     // Expense: budgeting at/above avg is good. Income: budgeting at/below avg is good.
     const good = isIncome ? diff <= 0 : diff >= 0
-    const color = Math.abs(diff) < 0.5 ? 'text-ink-400' : good ? 'text-teal-400' : 'text-rose-400'
+    const color = Math.abs(diff) < 0.5 ? 'text-ink-300' : good ? 'text-ink-300' : 'text-rose-400'
     return <span className={color}>{formatCurrencySignedWhole(diff)}</span>
   }
 
