@@ -647,7 +647,7 @@ export default function BudgetPage() {
 
               {/* Net total (income − expenses) pinned to the top of the table */}
               {!selectMode && (
-                <TotalRow label="Net" t={grandTotals.net} className="py-2 mb-1 border-b border-white/[0.06]" />
+                <TotalRow label="Net" t={grandTotals.net} className="py-2" />
               )}
 
               {(selectMode ? selectSections : sections).map(section => {
@@ -662,7 +662,7 @@ export default function BudgetPage() {
                 const collapsed = collapsedSections.has(section.groupName)
 
                 return (
-                  <div key={section.groupName} className="py-2">
+                  <div key={section.groupName} className="py-2 border-t border-white/[0.06]">
                     <button
                       type="button"
                       onClick={() => toggleSection(section.groupName)}
@@ -740,9 +740,9 @@ export default function BudgetPage() {
                     {/* Income is a single section, so its subtotal is the grand
                         Total Income row; expense sections keep a plain subtotal. */}
                     {!selectMode && (isIncomeGroup ? (
-                      <TotalRow label="Total Income" t={grandTotals.income} className="pt-1.5 mt-1 border-t border-white/[0.06]" />
+                      <TotalRow label="Total Income" t={grandTotals.income} className="pt-1.5 mt-1" />
                     ) : (
-                      <div className={clsx(GRID, 'pt-1.5 mt-1 border-t border-white/[0.06] text-xs font-mono text-ink-300')}>
+                      <div className={clsx(GRID, 'pt-1.5 mt-1 text-xs font-mono text-ink-300')}>
                         <span className="uppercase tracking-wide">Subtotal</span>
                         <span className="text-right text-ink-100">{formatCurrencyWhole(subtotal.budget)}</span>
                         <span className="text-right">{formatCurrencyWhole(subtotal.avg1)}</span>
