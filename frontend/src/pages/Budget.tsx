@@ -56,11 +56,6 @@ function getPreviousMonth(year: number, month: number): { year: number; month: n
   return { year, month: month - 1 }
 }
 
-function isOtherNamed(name: string): boolean {
-  const lower = name.toLowerCase()
-  return lower === 'other income' || lower === 'other expense'
-}
-
 // ── Row model for the budget table ───────────────────────────────────────────
 
 interface Avgs { avg1: number; avg3: number; avg6: number; avg12: number }
@@ -419,10 +414,8 @@ export default function BudgetPage() {
     const grouped = new Map<string, BudgetRow[]>()
     GROUP_ORDER.forEach(g => grouped.set(g, []))
 
-    const otherIncome = emptyAvgs()
-    const otherExpense = emptyAvgs()
-    let otherIncomeChecked = false
-    let otherExpenseChecked = false
+    const unbudgetedIncome = emptyAvgs()
+    const unbudgetedExpense = emptyAvgs()
 
     const addAvgs = (bucket: Avgs, line?: SpendingAverageLine) => {
       if (!line) return
@@ -434,15 +427,12 @@ export default function BudgetPage() {
       for (const child of sortCategoryChildren(parent.name, parent.children)) {
         if (child.name.toLowerCase() === 'uncategorized') continue
         const line = avgByCat.get(child.id)
-        const named = isOtherNamed(child.name)
-        const visible = visibleCategories.has(child.id)
 
-        if (named || !visible) {
-          addAvgs(child.is_income ? otherIncome : otherExpense, line)
-          if (named && visible) {
-            if (child.is_income) otherIncomeChecked = true
-            else otherExpenseChecked = true
-          }
+        // Unchecked categories roll into a single non-editable "Unbudgeted" row so
+        // their spend stays visible; every checked category — including the real
+        // "Other Income"/"Other Expense" — is an ordinary budgetable row.
+        if (!visibleCategories.has(child.id)) {
+          addAvgs(child.is_income ? unbudgetedIncome : unbudgetedExpense, line)
           continue
         }
 
@@ -460,16 +450,15 @@ export default function BudgetPage() {
     }
 
     const hasVals = (a: Avgs) => a.avg1 !== 0 || a.avg3 !== 0 || a.avg6 !== 0 || a.avg12 !== 0
-    // "Other Income" is income, so it lives under the Income section — not the
-    // (expense-oriented) "Other" group. It sits after the editable income rows.
-    if (otherIncomeChecked || hasVals(otherIncome)) {
+    // Rollup of everything left out of the budget — shown but not editable.
+    if (hasVals(unbudgetedIncome)) {
       grouped.get('Income')?.push({
-        key: 'other-income', name: 'Other Income', isIncome: true, editable: false, ...otherIncome,
+        key: 'unbudgeted-income', name: 'Unbudgeted', isIncome: true, editable: false, ...unbudgetedIncome,
       })
     }
-    if (otherExpenseChecked || hasVals(otherExpense)) {
+    if (hasVals(unbudgetedExpense)) {
       grouped.get('Other')?.push({
-        key: 'other-expenses', name: 'Other Expenses', isIncome: false, editable: false, ...otherExpense,
+        key: 'unbudgeted-expenses', name: 'Unbudgeted', isIncome: false, editable: false, ...unbudgetedExpense,
       })
     }
 
@@ -729,7 +718,7 @@ export default function BudgetPage() {
                               className="w-full bg-surface-700 border border-white/[0.08] rounded-md px-2 py-1 text-sm font-mono text-ink-100 text-right focus:outline-none focus:border-amber-400/40 transition-colors"
                             />
                           ) : (
-                            <span className="text-right text-2xs text-ink-500 italic">Other</span>
+                            <span className="text-right text-2xs text-ink-500 italic">—</span>
                           )}
                           <span className="text-right text-sm font-mono"><AvgCell budget={budgetVal} avg={row.avg1} isIncome={row.isIncome} showDiff={showDiff} plain={!row.editable} /></span>
                           <span className="text-right text-sm font-mono"><AvgCell budget={budgetVal} avg={row.avg3} isIncome={row.isIncome} showDiff={showDiff} plain={!row.editable} /></span>
