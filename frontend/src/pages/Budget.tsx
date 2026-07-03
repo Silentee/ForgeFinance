@@ -460,8 +460,10 @@ export default function BudgetPage() {
     }
 
     const hasVals = (a: Avgs) => a.avg1 !== 0 || a.avg3 !== 0 || a.avg6 !== 0 || a.avg12 !== 0
+    // "Other Income" is income, so it lives under the Income section — not the
+    // (expense-oriented) "Other" group. It sits after the editable income rows.
     if (otherIncomeChecked || hasVals(otherIncome)) {
-      grouped.get('Other')?.push({
+      grouped.get('Income')?.push({
         key: 'other-income', name: 'Other Income', isIncome: true, editable: false, ...otherIncome,
       })
     }
