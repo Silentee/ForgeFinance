@@ -229,6 +229,22 @@ function CopyBudgetModal({
 // Grid template shared by header, rows, and totals so columns stay aligned.
 const GRID = 'grid grid-cols-[minmax(9rem,1fr)_6rem_repeat(4,minmax(3.5rem,4.5rem))] gap-x-2 items-center'
 
+// A bold total row: label + budget + the four average columns.
+function TotalRow({
+  label, t, className,
+}: { label: string; t: Avgs & { budget: number }; className?: string }) {
+  return (
+    <div className={clsx(GRID, 'text-sm font-mono font-semibold text-ink-100', className)}>
+      <span className="text-xs uppercase tracking-wide text-ink-200">{label}</span>
+      <span className="text-right">{formatCurrencyWhole(t.budget)}</span>
+      <span className="text-right">{formatCurrencyWhole(t.avg1)}</span>
+      <span className="text-right">{formatCurrencyWhole(t.avg3)}</span>
+      <span className="text-right">{formatCurrencyWhole(t.avg6)}</span>
+      <span className="text-right">{formatCurrencyWhole(t.avg12)}</span>
+    </div>
+  )
+}
+
 export default function BudgetPage() {
   const now = currentYearMonth()
   const [year, setYear] = useState(now.year)
@@ -236,6 +252,7 @@ export default function BudgetPage() {
   const [showCopy, setShowCopy] = useState(false)
   const [selectMode, setSelectMode] = useState(false)
   const [showDiff, setShowDiff] = useState(false)
+  const [collapsedSections, setCollapsedSections] = useState<Set<string>>(new Set())
   const [visibleCategories, setVisibleCategories] = useState<Set<number>>(new Set())
   const [autoCarryDone, setAutoCarryDone] = useState<Set<string>>(new Set())
   const [visibilityInitDone, setVisibilityInitDone] = useState<Set<string>>(new Set())
@@ -369,6 +386,15 @@ export default function BudgetPage() {
     }
     return m
   }, [categories])
+
+  const toggleSection = (groupName: string) => {
+    setCollapsedSections(prev => {
+      const next = new Set(prev)
+      if (next.has(groupName)) next.delete(groupName)
+      else next.add(groupName)
+      return next
+    })
+  }
 
   const handleBudgetChange = (catId: number, value: string) => {
     setAmounts(prev => ({ ...prev, [catId]: value }))
@@ -510,20 +536,31 @@ export default function BudgetPage() {
     return { income, expense, net: income - expense }
   }, [amounts, leafById, visibleCategories])
 
+  // ── Grand totals: budget and averages, scoped to the checked categories so the
+  //    budget side matches the summary cards and each column is apples-to-apples.
+  const grandTotals = useMemo(() => {
+    const income: Avgs & { budget: number } = { budget: 0, ...emptyAvgs() }
+    const expense: Avgs & { budget: number } = { budget: 0, ...emptyAvgs() }
+    for (const section of sections) {
+      for (const r of section.rows) {
+        if (!r.editable || r.categoryId == null) continue  // skip "Other" aggregate rows
+        const t = r.isIncome ? income : expense
+        t.budget += parseFloat(amounts[r.categoryId] ?? '') || 0
+        t.avg1 += r.avg1; t.avg3 += r.avg3; t.avg6 += r.avg6; t.avg12 += r.avg12
+      }
+    }
+    const net = {
+      budget: income.budget - expense.budget,
+      avg1: income.avg1 - expense.avg1, avg3: income.avg3 - expense.avg3,
+      avg6: income.avg6 - expense.avg6, avg12: income.avg12 - expense.avg12,
+    }
+    return { income, expense, net }
+  }, [sections, amounts])
+
   const summaryTiles = averages ? [
-    {
-      label: 'Income', budget: budgetTotals.income, isIncome: true,
-      avg3: averages.total_income_avg_3m, avg12: averages.total_income_avg_12m,
-    },
-    {
-      label: 'Expenses', budget: budgetTotals.expense, isIncome: false,
-      avg3: averages.total_expense_avg_3m, avg12: averages.total_expense_avg_12m,
-    },
-    {
-      label: 'Net', budget: budgetTotals.net, isIncome: true,
-      avg3: averages.total_income_avg_3m - averages.total_expense_avg_3m,
-      avg12: averages.total_income_avg_12m - averages.total_expense_avg_12m,
-    },
+    { label: 'Income', budget: budgetTotals.income, isIncome: true },
+    { label: 'Expenses', budget: budgetTotals.expense, isIncome: false },
+    { label: 'Net', budget: budgetTotals.net, isIncome: true },
   ] : []
 
   const monthSelector = (className: string) => (
@@ -585,9 +622,6 @@ export default function BudgetPage() {
                 )}>
                   {formatCurrencyWhole(t.budget)}
                 </span>
-                <span className="text-xs text-ink-300 font-mono">
-                  3M {formatCurrencyWhole(t.avg3)} · 12M {formatCurrencyWhole(t.avg12)}
-                </span>
               </Card>
             ))}
           </div>
@@ -634,6 +668,11 @@ export default function BudgetPage() {
                 <span className="text-right">12M</span>
               </div>
 
+              {/* Net total (income − expenses) pinned to the top of the table */}
+              {!selectMode && (
+                <TotalRow label="Net" t={grandTotals.net} className="py-2 mb-1 border-b border-white/[0.06]" />
+              )}
+
               {(selectMode ? selectSections : sections).map(section => {
                 const isIncomeGroup = section.groupName === 'Income'
                 const subtotal = section.rows.reduce((acc, r) => {
@@ -643,14 +682,27 @@ export default function BudgetPage() {
                   return acc
                 }, { budget: 0, avg1: 0, avg3: 0, avg6: 0, avg12: 0 })
 
+                const collapsed = collapsedSections.has(section.groupName)
+
                 return (
                   <div key={section.groupName} className="py-2">
-                    <div className="flex items-center gap-2 mb-1.5">
+                    <button
+                      type="button"
+                      onClick={() => toggleSection(section.groupName)}
+                      className="flex items-center gap-2 mb-1.5 w-full text-left group"
+                    >
+                      <svg
+                        viewBox="0 0 20 20"
+                        fill="currentColor"
+                        className={clsx('w-3 h-3 text-ink-400 transition-transform duration-150', collapsed && '-rotate-90')}
+                      >
+                        <path fillRule="evenodd" d="M5.23 7.21a.75.75 0 011.06.02L10 11.168l3.71-3.938a.75.75 0 111.08 1.04l-4.25 4.5a.75.75 0 01-1.08 0l-4.25-4.5a.75.75 0 01.02-1.06z" clipRule="evenodd" />
+                      </svg>
                       <div className={clsx('w-1.5 h-1.5 rounded-full', isIncomeGroup ? 'bg-teal-400' : 'bg-rose-400')} />
-                      <h3 className="text-xs font-semibold text-ink-200">{section.groupName}</h3>
-                    </div>
+                      <h3 className="text-xs font-semibold text-ink-200 group-hover:text-ink-100">{section.groupName}</h3>
+                    </button>
 
-                    {section.rows.map(row => {
+                    {!collapsed && section.rows.map(row => {
                       const budgetVal = row.categoryId != null ? (parseFloat(amounts[row.categoryId] ?? '') || 0) : 0
 
                       // Selection mode: checkbox + name, current budget, and raw averages.
@@ -708,8 +760,11 @@ export default function BudgetPage() {
                       )
                     })}
 
-                    {/* Group subtotal (hidden while selecting categories) */}
-                    {!selectMode && (
+                    {/* Income is a single section, so its subtotal is the grand
+                        Total Income row; expense sections keep a plain subtotal. */}
+                    {!selectMode && (isIncomeGroup ? (
+                      <TotalRow label="Total Income" t={grandTotals.income} className="pt-1.5 mt-1 border-t border-white/[0.06]" />
+                    ) : (
                       <div className={clsx(GRID, 'pt-1.5 mt-1 border-t border-white/[0.06] text-xs font-mono text-ink-300')}>
                         <span className="uppercase tracking-wide">Subtotal</span>
                         <span className="text-right text-ink-100">{formatCurrencyWhole(subtotal.budget)}</span>
@@ -718,10 +773,15 @@ export default function BudgetPage() {
                         <span className="text-right">{formatCurrencyWhole(subtotal.avg6)}</span>
                         <span className="text-right">{formatCurrencyWhole(subtotal.avg12)}</span>
                       </div>
-                    )}
+                    ))}
                   </div>
                 )
               })}
+
+              {/* Total expenses pinned to the bottom of the table */}
+              {!selectMode && (
+                <TotalRow label="Total Expenses" t={grandTotals.expense} className="pt-2 mt-1 border-t-2 border-white/[0.12]" />
+              )}
             </div>
           </Card>
         </>
