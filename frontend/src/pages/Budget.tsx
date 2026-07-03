@@ -378,15 +378,6 @@ export default function BudgetPage() {
     return m
   }, [averages])
 
-  const leafById = useMemo(() => {
-    const m = new Map<number, Category>()
-    if (categories) {
-      const walk = (cats: Category[]) => cats.forEach(c => c.children.length > 0 ? walk(c.children) : m.set(c.id, c))
-      walk(categories)
-    }
-    return m
-  }, [categories])
-
   const toggleSection = (groupName: string) => {
     setCollapsedSections(prev => {
       const next = new Set(prev)
@@ -522,22 +513,8 @@ export default function BudgetPage() {
       .filter(s => s.rows.length > 0)
   }, [categories, avgByCat])
 
-  // ── Budgeted totals (visible categories only) ────────────────────────────────
-  const budgetTotals = useMemo(() => {
-    let income = 0, expense = 0
-    for (const [idStr, val] of Object.entries(amounts)) {
-      const v = parseFloat(val)
-      if (isNaN(v)) continue
-      const cat = leafById.get(Number(idStr))
-      if (!cat || !visibleCategories.has(cat.id)) continue
-      if (cat.is_income) income += v
-      else expense += v
-    }
-    return { income, expense, net: income - expense }
-  }, [amounts, leafById, visibleCategories])
-
-  // ── Grand totals: budget and averages, scoped to the checked categories so the
-  //    budget side matches the summary cards and each column is apples-to-apples.
+  // ── Grand totals: budget and averages, scoped to the same editable rows shown in
+  //    the table so the summary cards, the total rows, and each column all agree.
   const grandTotals = useMemo(() => {
     const income: Avgs & { budget: number } = { budget: 0, ...emptyAvgs() }
     const expense: Avgs & { budget: number } = { budget: 0, ...emptyAvgs() }
@@ -558,9 +535,9 @@ export default function BudgetPage() {
   }, [sections, amounts])
 
   const summaryTiles = averages ? [
-    { label: 'Income', budget: budgetTotals.income, isIncome: true },
-    { label: 'Expenses', budget: budgetTotals.expense, isIncome: false },
-    { label: 'Net', budget: budgetTotals.net, isIncome: true },
+    { label: 'Income', budget: grandTotals.income.budget, isIncome: true },
+    { label: 'Expenses', budget: grandTotals.expense.budget, isIncome: false },
+    { label: 'Net', budget: grandTotals.net.budget, isIncome: true },
   ] : []
 
   const monthSelector = (className: string) => (
