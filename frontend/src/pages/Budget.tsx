@@ -586,7 +586,7 @@ export default function BudgetPage() {
                   'stat-value',
                   t.label === 'Net'
                     ? (t.budget >= 0 ? 'value-positive' : 'value-negative')
-                    : t.isIncome ? 'value-positive' : 'value-neutral',
+                    : 'value-neutral',
                 )}>
                   {formatCurrencyWhole(t.budget)}
                 </span>
