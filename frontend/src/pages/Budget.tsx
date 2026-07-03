@@ -577,20 +577,23 @@ export default function BudgetPage() {
         <div className="flex justify-center py-12"><Spinner size="lg" /></div>
       ) : (
         <>
-          {/* Compact summary: budgeted totals vs. recent averages */}
-          <div className="grid grid-cols-3 gap-3">
-            {summaryTiles.map(t => (
-              <Card key={t.label} className="flex flex-col gap-1">
-                <span className="label">{t.label}</span>
-                <span className={clsx(
-                  'stat-value',
-                  t.label === 'Net'
-                    ? (t.budget >= 0 ? 'value-positive' : 'value-negative')
-                    : 'value-neutral',
-                )}>
-                  {formatCurrencyWhole(t.budget)}
-                </span>
-              </Card>
+          {/* Compact summary: budgeted totals vs. recent averages.
+              Mobile: 2 tiles on top, Net centered below (matches Cash Flow). */}
+          <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+            {summaryTiles.map((t, i) => (
+              <div key={t.label} className={clsx(i === 2 && 'col-span-2 md:col-span-1 flex justify-center')}>
+                <Card className={clsx('flex flex-col gap-1 w-full', i === 2 && 'max-md:w-1/2')}>
+                  <span className="label">{t.label}</span>
+                  <span className={clsx(
+                    'stat-value',
+                    t.label === 'Net'
+                      ? (t.budget >= 0 ? 'value-positive' : 'value-negative')
+                      : 'value-neutral',
+                  )}>
+                    {formatCurrencyWhole(t.budget)}
+                  </span>
+                </Card>
+              </div>
             ))}
           </div>
 
@@ -625,7 +628,10 @@ export default function BudgetPage() {
           )}
 
           <Card>
-            <div className="min-w-[34rem]">
+            {/* Mobile: scroll the wide table horizontally instead of overflowing
+                the page. md+ stays overflow-visible so the sticky header works. */}
+            <div className="overflow-x-auto md:overflow-visible -mx-5 px-5">
+              <div className="min-w-[34rem]">
               {/* Column header — sticks just below the page title bar as the page scrolls */}
               <div className={clsx(GRID, 'sticky top-[calc(var(--page-header-height,0px)_-_1px)] z-10 -mx-5 px-5 bg-surface-800 pb-2 pt-3 border-b border-white/[0.06] text-xs uppercase tracking-wide text-ink-300')}>
                 <span>Category</span>
@@ -760,6 +766,7 @@ export default function BudgetPage() {
               {!selectMode && (
                 <TotalRow label="Total Expenses" t={grandTotals.expense} className="pt-2 mt-1 border-t-2 border-white/[0.12]" />
               )}
+              </div>
             </div>
           </Card>
         </>
