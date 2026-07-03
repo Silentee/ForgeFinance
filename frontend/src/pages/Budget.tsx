@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect, useCallback, useRef } from 'react'
+import { useState, useMemo, useEffect, useCallback, useRef, Fragment } from 'react'
 import {
   useBudgets, useCategories, useBulkCreateBudgets, useAutoSaveBudgets, useCopyBudgetMonth,
   useDemoStatus, useBudgetVisibleCategories, useSetBudgetVisibleCategories, useSpendingAverages,
@@ -221,22 +221,25 @@ function CopyBudgetModal({
   )
 }
 
-// Grid template shared by header, rows, and totals so columns stay aligned.
-const GRID = 'grid grid-cols-[minmax(9rem,1fr)_6rem_repeat(4,minmax(3.5rem,4.5rem))] gap-x-2 items-center'
+// Horizontal scroll distance over which the frozen "Category" column collapses.
+const STICKY_COL_COLLAPSE_DISTANCE = 32
 
 // A bold total row: label + budget + the four average columns.
 function TotalRow({
-  label, t, className,
-}: { label: string; t: Avgs & { budget: number }; className?: string }) {
+  label, t, basePad, className,
+}: { label: string; t: Avgs & { budget: number }; basePad: number; className?: string }) {
   return (
-    <div className={clsx(GRID, 'text-sm font-mono font-semibold text-ink-100', className)}>
-      <span className="text-xs uppercase tracking-wide text-ink-200">{label}</span>
-      <span className="text-right">{formatCurrencyWhole(t.budget)}</span>
-      <span className="text-right">{formatCurrencyWhole(t.avg1)}</span>
-      <span className="text-right">{formatCurrencyWhole(t.avg3)}</span>
-      <span className="text-right">{formatCurrencyWhole(t.avg6)}</span>
-      <span className="text-right">{formatCurrencyWhole(t.avg12)}</span>
-    </div>
+    <tr className={clsx('font-mono font-semibold', className)}>
+      <td
+        className="sticky left-0 z-10 bg-surface-800 py-2 text-xs uppercase tracking-wide text-ink-200"
+        style={{ paddingLeft: basePad, paddingRight: basePad }}
+      >{label}</td>
+      <td className="py-2 px-2 text-right text-sm text-ink-100">{formatCurrencyWhole(t.budget)}</td>
+      <td className="py-2 px-2 text-right text-sm text-ink-100">{formatCurrencyWhole(t.avg1)}</td>
+      <td className="py-2 px-2 text-right text-sm text-ink-100">{formatCurrencyWhole(t.avg3)}</td>
+      <td className="py-2 px-2 text-right text-sm text-ink-100">{formatCurrencyWhole(t.avg6)}</td>
+      <td className="py-2 px-2 text-right text-sm text-ink-100">{formatCurrencyWhole(t.avg12)}</td>
+    </tr>
   )
 }
 
@@ -270,6 +273,54 @@ export default function BudgetPage() {
   const isDemo = !!demoStatus?.has_demo_data
   const visibility = useBudgetVisibleCategories(year, month, !isDemo && demoStatus !== undefined)
   const previousVisibility = useBudgetVisibleCategories(previousMonth.year, previousMonth.month, !isDemo && demoStatus !== undefined)
+
+  // ── Frozen category column + floating header (mirrors the Spending report) ───
+  const theadRef = useRef<HTMLTableSectionElement>(null)
+  const tableWrapperRef = useRef<HTMLDivElement>(null)
+  const floatingHeaderRef = useRef<HTMLDivElement>(null)
+  const [showFloatingHeader, setShowFloatingHeader] = useState(false)
+  const [colCollapse, setColCollapse] = useState(0)
+
+  // Show a fixed duplicate header once the real one scrolls up behind the page header.
+  useEffect(() => {
+    const thead = theadRef.current
+    if (!thead) return
+    const scrollParent = thead.closest('main')
+    if (!scrollParent) return
+    const check = () => {
+      const headerH = parseFloat(
+        getComputedStyle(document.documentElement).getPropertyValue('--page-header-height') || '0'
+      )
+      setShowFloatingHeader(thead.getBoundingClientRect().top < headerH)
+    }
+    scrollParent.addEventListener('scroll', check, { passive: true })
+    window.addEventListener('resize', check)
+    check()
+    return () => {
+      scrollParent.removeEventListener('scroll', check)
+      window.removeEventListener('resize', check)
+    }
+  }, [isLoading, averages])
+
+  // Sync the floating header's horizontal scroll + collapse the frozen column.
+  const onTableScroll = useCallback(() => {
+    if (tableWrapperRef.current && floatingHeaderRef.current) {
+      floatingHeaderRef.current.scrollLeft = tableWrapperRef.current.scrollLeft
+    }
+    const p = Math.min(1, (tableWrapperRef.current?.scrollLeft ?? 0) / STICKY_COL_COLLAPSE_DISTANCE)
+    setColCollapse(prev => (prev === p ? prev : p))
+  }, [])
+
+  useEffect(() => {
+    if (showFloatingHeader && tableWrapperRef.current && floatingHeaderRef.current) {
+      floatingHeaderRef.current.scrollLeft = tableWrapperRef.current.scrollLeft
+    }
+  }, [showFloatingHeader])
+
+  // Frozen "Category" column geometry, interpolated by scroll-collapse progress (0..1).
+  const catColWidth = Math.round(180 - 40 * colCollapse) // 180 → 140
+  const catBasePad = Math.round(16 - 8 * colCollapse)    // 16 → 8
+  const catTableMinWidth = catColWidth + 96 + 72 * 4     // budget col + four avg cols
 
   // ── Visible-category sync (demo default / server / carry-from-previous) ──────
   useEffect(() => {
@@ -570,7 +621,7 @@ export default function BudgetPage() {
             <Button variant="secondary" size="sm" onClick={() => setShowCopy(true)}>Copy Budget</Button>
           </div>
         }
-        extra={<div className="flex justify-end md:hidden">{monthSelector('')}</div>}
+        extra={<div className="mt-3 flex justify-end md:hidden">{monthSelector('')}</div>}
       />
 
       {isLoading || !averages ? (
@@ -627,146 +678,204 @@ export default function BudgetPage() {
             </p>
           )}
 
-          <Card>
-            {/* Mobile: scroll the wide table horizontally instead of overflowing
-                the page. md+ stays overflow-visible so the sticky header works. */}
-            <div className="overflow-x-auto md:overflow-visible -mx-5 px-5">
-              <div className="min-w-[34rem]">
-              {/* Column header — sticks just below the page title bar as the page scrolls */}
-              <div className={clsx(GRID, 'sticky top-[calc(var(--page-header-height,0px)_-_1px)] z-10 -mx-5 px-5 bg-surface-800 pb-2 pt-3 border-b border-white/[0.06] text-xs uppercase tracking-wide text-ink-300')}>
-                <span>Category</span>
-                <span className="text-right">Budget</span>
-                <span className="text-right">1M</span>
-                <span className="text-right">3M</span>
-                <span className="text-right">6M</span>
-                <span className="text-right">12M</span>
-              </div>
-
-              {/* Net total (income − expenses) pinned to the top of the table */}
-              {!selectMode && (
-                <TotalRow label="Net" t={grandTotals.net} className="py-2" />
-              )}
-
-              {(selectMode ? selectSections : sections).map((section, i, arr) => {
-                const isIncomeGroup = section.groupName === 'Income'
-                // The first expense section (right after Income) gets a heavier
-                // divider so the income block reads as clearly separate.
-                const isFirstExpense = !isIncomeGroup && arr[i - 1]?.groupName === 'Income'
-                const subtotal = section.rows.reduce((acc, r) => {
-                  const b = r.editable && r.categoryId != null ? (parseFloat(amounts[r.categoryId] ?? '') || 0) : 0
-                  acc.budget += b
-                  acc.avg1 += r.avg1; acc.avg3 += r.avg3; acc.avg6 += r.avg6; acc.avg12 += r.avg12
-                  return acc
-                }, { budget: 0, avg1: 0, avg3: 0, avg6: 0, avg12: 0 })
-
-                const collapsed = collapsedSections.has(section.groupName)
-
-                return (
-                  <div
-                    key={section.groupName}
-                    className={clsx(
-                      'py-2',
-                      isIncomeGroup && 'bg-teal-500/[0.03]',
-                      (isIncomeGroup || isFirstExpense) ? 'border-t-2 border-white/[0.12] mt-1' : 'border-t border-white/[0.06]',
-                    )}
-                  >
-                    <button
-                      type="button"
-                      onClick={() => toggleSection(section.groupName)}
-                      className="flex items-center gap-2 mb-1.5 w-full text-left group"
-                    >
-                      <svg
-                        viewBox="0 0 20 20"
-                        fill="currentColor"
-                        className={clsx('w-3 h-3 text-ink-400 transition-transform duration-150', collapsed && '-rotate-90')}
-                      >
-                        <path fillRule="evenodd" d="M5.23 7.21a.75.75 0 011.06.02L10 11.168l3.71-3.938a.75.75 0 111.08 1.04l-4.25 4.5a.75.75 0 01-1.08 0l-4.25-4.5a.75.75 0 01.02-1.06z" clipRule="evenodd" />
-                      </svg>
-                      <div className={clsx('w-1.5 h-1.5 rounded-full', isIncomeGroup ? 'bg-teal-400' : 'bg-rose-400')} />
-                      <h3 className="text-xs font-semibold text-ink-200 group-hover:text-ink-100">{section.groupName}</h3>
-                    </button>
-
-                    {!collapsed && section.rows.map(row => {
-                      const budgetVal = row.categoryId != null ? (parseFloat(amounts[row.categoryId] ?? '') || 0) : 0
-
-                      // Selection mode: checkbox + name, current budget, and raw averages.
-                      if (selectMode && row.categoryId != null) {
-                        const checked = visibleCategories.has(row.categoryId)
-                        return (
-                          <label key={row.key} className={clsx(GRID, 'py-1.5 border-b border-white/[0.03] last:border-0 cursor-pointer')}>
-                            <div className="flex items-center gap-2 min-w-0">
-                              <input
-                                type="checkbox"
-                                checked={checked}
-                                onChange={() => handleToggleVisible(row.categoryId!)}
-                                className="accent-amber-400 flex-shrink-0"
-                              />
-                              <span className={clsx('text-sm truncate', checked ? 'text-ink-100' : 'text-ink-400')}>{row.name}</span>
-                            </div>
-                            <span className="text-right text-xs font-mono text-ink-500">{budgetVal > 0 ? formatCurrencyWhole(budgetVal) : '—'}</span>
-                            <span className="text-right text-sm font-mono"><AvgCell budget={0} avg={row.avg1} isIncome={row.isIncome} showDiff={false} plain /></span>
-                            <span className="text-right text-sm font-mono"><AvgCell budget={0} avg={row.avg3} isIncome={row.isIncome} showDiff={false} plain /></span>
-                            <span className="text-right text-sm font-mono"><AvgCell budget={0} avg={row.avg6} isIncome={row.isIncome} showDiff={false} plain /></span>
-                            <span className="text-right text-sm font-mono"><AvgCell budget={0} avg={row.avg12} isIncome={row.isIncome} showDiff={false} plain /></span>
-                          </label>
-                        )
-                      }
-
-                      return (
-                        <div key={row.key} className={clsx(GRID, 'py-1.5 border-b border-white/[0.03] last:border-0')}>
-                          <div className="flex items-center gap-1.5 min-w-0">
-                            <span className="text-sm text-ink-100 truncate">{row.name}</span>
-                            {savedCat === row.categoryId && (
-                              <span className="text-2xs text-teal-400 flex-shrink-0">✓</span>
-                            )}
-                          </div>
-                          {row.editable && row.categoryId != null ? (
-                            <input
-                              type="number"
-                              step="0.01"
-                              min="0"
-                              placeholder="—"
-                              value={amounts[row.categoryId] ?? ''}
-                              onFocus={() => setFocusedCat(row.categoryId!)}
-                              onChange={e => handleBudgetChange(row.categoryId!, e.target.value)}
-                              onBlur={() => handleBudgetBlur(row.categoryId!)}
-                              onWheel={e => (e.target as HTMLInputElement).blur()}
-                              className="w-full bg-surface-700 border border-white/[0.08] rounded-md px-2 py-1 text-sm font-mono text-ink-100 text-right focus:outline-none focus:border-amber-400/40 transition-colors"
-                            />
-                          ) : (
-                            <span className="text-right text-2xs text-ink-500 italic">—</span>
-                          )}
-                          <span className="text-right text-sm font-mono"><AvgCell budget={budgetVal} avg={row.avg1} isIncome={row.isIncome} showDiff={showDiff} plain={!row.editable} /></span>
-                          <span className="text-right text-sm font-mono"><AvgCell budget={budgetVal} avg={row.avg3} isIncome={row.isIncome} showDiff={showDiff} plain={!row.editable} /></span>
-                          <span className="text-right text-sm font-mono"><AvgCell budget={budgetVal} avg={row.avg6} isIncome={row.isIncome} showDiff={showDiff} plain={!row.editable} /></span>
-                          <span className="text-right text-sm font-mono"><AvgCell budget={budgetVal} avg={row.avg12} isIncome={row.isIncome} showDiff={showDiff} plain={!row.editable} /></span>
-                        </div>
-                      )
-                    })}
-
-                    {/* Income is a single section, so its subtotal is the grand
-                        Total Income row; expense sections keep a plain subtotal. */}
-                    {!selectMode && (isIncomeGroup ? (
-                      <TotalRow label="Total Income" t={grandTotals.income} className="pt-1.5 mt-1" />
-                    ) : (
-                      <div className={clsx(GRID, 'pt-1.5 mt-1 text-xs font-mono text-ink-300')}>
-                        <span className="uppercase tracking-wide">Subtotal</span>
-                        <span className="text-right text-ink-100">{formatCurrencyWhole(subtotal.budget)}</span>
-                        <span className="text-right">{formatCurrencyWhole(subtotal.avg1)}</span>
-                        <span className="text-right">{formatCurrencyWhole(subtotal.avg3)}</span>
-                        <span className="text-right">{formatCurrencyWhole(subtotal.avg6)}</span>
-                        <span className="text-right">{formatCurrencyWhole(subtotal.avg12)}</span>
-                      </div>
-                    ))}
+          <Card padding={false}>
+            {/* Floating header — a fixed duplicate that appears once the real
+                header scrolls up behind the page title bar (mirrors Spending). */}
+            {showFloatingHeader && (() => {
+              const rect = tableWrapperRef.current?.getBoundingClientRect()
+              return (
+                <div
+                  className="fixed z-20 bg-surface-800 border-b border-white/[0.06] shadow-lg"
+                  style={{ top: 'calc(var(--page-header-height, 0px) - 1px)', left: rect?.left ?? 0, width: rect?.width ?? '100%' }}
+                >
+                  <div ref={floatingHeaderRef} className="overflow-hidden">
+                    <table className="w-full text-sm" style={{ tableLayout: 'fixed', minWidth: catTableMinWidth, borderCollapse: 'collapse' }}>
+                      <colgroup>
+                        <col style={{ width: catColWidth }} />
+                        <col style={{ width: 96 }} />
+                        <col style={{ width: 72 }} />
+                        <col style={{ width: 72 }} />
+                        <col style={{ width: 72 }} />
+                        <col style={{ width: 72 }} />
+                      </colgroup>
+                      <thead>
+                        <tr className="text-xs uppercase tracking-wide text-ink-300">
+                          <th className="text-left font-medium py-3 bg-surface-800" style={{ paddingLeft: catBasePad, paddingRight: catBasePad }}>Category</th>
+                          <th className="text-right font-medium px-2 py-3">Budget</th>
+                          <th className="text-right font-medium px-2 py-3">1M</th>
+                          <th className="text-right font-medium px-2 py-3">3M</th>
+                          <th className="text-right font-medium px-2 py-3">6M</th>
+                          <th className="text-right font-medium px-2 py-3">12M</th>
+                        </tr>
+                      </thead>
+                    </table>
                   </div>
-                )
-              })}
+                </div>
+              )
+            })()}
 
-              {/* Total expenses pinned to the bottom of the table */}
-              {!selectMode && (
-                <TotalRow label="Total Expenses" t={grandTotals.expense} className="pt-2 mt-1 border-t-2 border-white/[0.12]" />
-              )}
-              </div>
+            <div className="overflow-x-auto" ref={tableWrapperRef} onScroll={onTableScroll}>
+              <table className="w-full text-sm" style={{ tableLayout: 'fixed', minWidth: catTableMinWidth, borderCollapse: 'collapse' }}>
+                <colgroup>
+                  <col style={{ width: catColWidth }} />
+                  <col style={{ width: 96 }} />
+                  <col style={{ width: 72 }} />
+                  <col style={{ width: 72 }} />
+                  <col style={{ width: 72 }} />
+                  <col style={{ width: 72 }} />
+                </colgroup>
+                <thead ref={theadRef}>
+                  <tr className="border-b border-white/[0.06] text-xs uppercase tracking-wide text-ink-300">
+                    <th className="text-left font-medium py-3 sticky left-0 z-10 bg-surface-800" style={{ paddingLeft: catBasePad, paddingRight: catBasePad }}>Category</th>
+                    <th className="text-right font-medium px-2 py-3">Budget</th>
+                    <th className="text-right font-medium px-2 py-3">1M</th>
+                    <th className="text-right font-medium px-2 py-3">3M</th>
+                    <th className="text-right font-medium px-2 py-3">6M</th>
+                    <th className="text-right font-medium px-2 py-3">12M</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {/* Net total (income − expenses) pinned to the top of the table */}
+                  {!selectMode && (
+                    <TotalRow label="Net" t={grandTotals.net} basePad={catBasePad} />
+                  )}
+
+                  {(selectMode ? selectSections : sections).map((section, i, arr) => {
+                    const isIncomeGroup = section.groupName === 'Income'
+                    // The first expense section (right after Income) gets a heavier
+                    // divider so the income block reads as clearly separate.
+                    const isFirstExpense = !isIncomeGroup && arr[i - 1]?.groupName === 'Income'
+                    const subtotal = section.rows.reduce((acc, r) => {
+                      const b = r.editable && r.categoryId != null ? (parseFloat(amounts[r.categoryId] ?? '') || 0) : 0
+                      acc.budget += b
+                      acc.avg1 += r.avg1; acc.avg3 += r.avg3; acc.avg6 += r.avg6; acc.avg12 += r.avg12
+                      return acc
+                    }, { budget: 0, avg1: 0, avg3: 0, avg6: 0, avg12: 0 })
+
+                    const collapsed = collapsedSections.has(section.groupName)
+
+                    return (
+                      <Fragment key={section.groupName}>
+                        {/* Group header — the label lives in a real first-column
+                            sticky cell so it stays frozen to the left while the
+                            table scrolls right (a full-width colSpan cell can't
+                            stick). The whole row toggles collapse. */}
+                        <tr
+                          onClick={() => toggleSection(section.groupName)}
+                          className={clsx(
+                            'group cursor-pointer',
+                            isIncomeGroup && 'bg-teal-500/[0.03]',
+                            (isIncomeGroup || isFirstExpense) ? 'border-t-2 border-white/[0.12]' : 'border-t border-white/[0.06]',
+                          )}
+                        >
+                          <td className="sticky left-0 z-10 bg-surface-800" style={{ paddingLeft: catBasePad, paddingRight: catBasePad }}>
+                            <div className="flex items-center gap-2 py-2 text-left">
+                              <svg
+                                viewBox="0 0 20 20"
+                                fill="currentColor"
+                                className={clsx('w-3 h-3 flex-shrink-0 text-ink-400 transition-transform duration-150', collapsed && '-rotate-90')}
+                              >
+                                <path fillRule="evenodd" d="M5.23 7.21a.75.75 0 011.06.02L10 11.168l3.71-3.938a.75.75 0 111.08 1.04l-4.25 4.5a.75.75 0 01-1.08 0l-4.25-4.5a.75.75 0 01.02-1.06z" clipRule="evenodd" />
+                              </svg>
+                              <div className={clsx('w-1.5 h-1.5 rounded-full flex-shrink-0', isIncomeGroup ? 'bg-teal-400' : 'bg-rose-400')} />
+                              <h3 className="text-xs font-semibold text-ink-200 group-hover:text-ink-100 truncate">{section.groupName}</h3>
+                            </div>
+                          </td>
+                          <td colSpan={5} />
+                        </tr>
+
+                        {!collapsed && section.rows.map(row => {
+                          const budgetVal = row.categoryId != null ? (parseFloat(amounts[row.categoryId] ?? '') || 0) : 0
+
+                          // Selection mode: checkbox + name, current budget, and raw averages.
+                          if (selectMode && row.categoryId != null) {
+                            const checked = visibleCategories.has(row.categoryId)
+                            return (
+                              <tr
+                                key={row.key}
+                                onClick={() => handleToggleVisible(row.categoryId!)}
+                                className="border-b border-white/[0.03] cursor-pointer"
+                              >
+                                <td className="py-1.5 sticky left-0 z-10 bg-surface-800" style={{ paddingLeft: catBasePad, paddingRight: catBasePad }}>
+                                  <div className="flex items-center gap-2 min-w-0">
+                                    <input
+                                      type="checkbox"
+                                      checked={checked}
+                                      onChange={() => {}}
+                                      className="accent-amber-400 flex-shrink-0 pointer-events-none"
+                                    />
+                                    <span className={clsx('text-sm truncate', checked ? 'text-ink-100' : 'text-ink-400')}>{row.name}</span>
+                                  </div>
+                                </td>
+                                <td className="py-1.5 px-2 text-right text-xs font-mono text-ink-500">{budgetVal > 0 ? formatCurrencyWhole(budgetVal) : '—'}</td>
+                                <td className="py-1.5 px-2 text-right text-sm font-mono"><AvgCell budget={0} avg={row.avg1} isIncome={row.isIncome} showDiff={false} plain /></td>
+                                <td className="py-1.5 px-2 text-right text-sm font-mono"><AvgCell budget={0} avg={row.avg3} isIncome={row.isIncome} showDiff={false} plain /></td>
+                                <td className="py-1.5 px-2 text-right text-sm font-mono"><AvgCell budget={0} avg={row.avg6} isIncome={row.isIncome} showDiff={false} plain /></td>
+                                <td className="py-1.5 px-2 text-right text-sm font-mono"><AvgCell budget={0} avg={row.avg12} isIncome={row.isIncome} showDiff={false} plain /></td>
+                              </tr>
+                            )
+                          }
+
+                          return (
+                            <tr key={row.key} className="border-b border-white/[0.03]">
+                              <td className="py-1.5 sticky left-0 z-10 bg-surface-800" style={{ paddingLeft: catBasePad, paddingRight: catBasePad }}>
+                                <div className="flex items-center gap-1.5 min-w-0">
+                                  <span className="text-sm text-ink-100 truncate">{row.name}</span>
+                                  {savedCat === row.categoryId && (
+                                    <span className="text-2xs text-teal-400 flex-shrink-0">✓</span>
+                                  )}
+                                </div>
+                              </td>
+                              <td className="py-1.5 px-2">
+                                {row.editable && row.categoryId != null ? (
+                                  <input
+                                    type="number"
+                                    step="0.01"
+                                    min="0"
+                                    placeholder="—"
+                                    value={amounts[row.categoryId] ?? ''}
+                                    onFocus={() => setFocusedCat(row.categoryId!)}
+                                    onChange={e => handleBudgetChange(row.categoryId!, e.target.value)}
+                                    onBlur={() => handleBudgetBlur(row.categoryId!)}
+                                    onWheel={e => (e.target as HTMLInputElement).blur()}
+                                    className="w-full bg-surface-700 border border-white/[0.08] rounded-md px-2 py-1 text-sm font-mono text-ink-100 text-right focus:outline-none focus:border-amber-400/40 transition-colors"
+                                  />
+                                ) : (
+                                  <span className="block text-right text-2xs text-ink-500 italic">—</span>
+                                )}
+                              </td>
+                              <td className="py-1.5 px-2 text-right text-sm font-mono"><AvgCell budget={budgetVal} avg={row.avg1} isIncome={row.isIncome} showDiff={showDiff} plain={!row.editable} /></td>
+                              <td className="py-1.5 px-2 text-right text-sm font-mono"><AvgCell budget={budgetVal} avg={row.avg3} isIncome={row.isIncome} showDiff={showDiff} plain={!row.editable} /></td>
+                              <td className="py-1.5 px-2 text-right text-sm font-mono"><AvgCell budget={budgetVal} avg={row.avg6} isIncome={row.isIncome} showDiff={showDiff} plain={!row.editable} /></td>
+                              <td className="py-1.5 px-2 text-right text-sm font-mono"><AvgCell budget={budgetVal} avg={row.avg12} isIncome={row.isIncome} showDiff={showDiff} plain={!row.editable} /></td>
+                            </tr>
+                          )
+                        })}
+
+                        {/* Income is a single section, so its subtotal is the grand
+                            Total Income row; expense sections keep a plain subtotal. */}
+                        {!selectMode && (isIncomeGroup ? (
+                          <TotalRow label="Total Income" t={grandTotals.income} basePad={catBasePad} />
+                        ) : (
+                          <tr className="text-xs font-mono text-ink-300">
+                            <td className="pt-1.5 pb-0.5 sticky left-0 z-10 bg-surface-800 uppercase tracking-wide" style={{ paddingLeft: catBasePad, paddingRight: catBasePad }}>Subtotal</td>
+                            <td className="pt-1.5 pb-0.5 px-2 text-right text-ink-100">{formatCurrencyWhole(subtotal.budget)}</td>
+                            <td className="pt-1.5 pb-0.5 px-2 text-right">{formatCurrencyWhole(subtotal.avg1)}</td>
+                            <td className="pt-1.5 pb-0.5 px-2 text-right">{formatCurrencyWhole(subtotal.avg3)}</td>
+                            <td className="pt-1.5 pb-0.5 px-2 text-right">{formatCurrencyWhole(subtotal.avg6)}</td>
+                            <td className="pt-1.5 pb-0.5 px-2 text-right">{formatCurrencyWhole(subtotal.avg12)}</td>
+                          </tr>
+                        ))}
+                      </Fragment>
+                    )
+                  })}
+
+                  {/* Total expenses pinned to the bottom of the table */}
+                  {!selectMode && (
+                    <TotalRow label="Total Expenses" t={grandTotals.expense} basePad={catBasePad} className="border-t-2 border-white/[0.12]" />
+                  )}
+                </tbody>
+              </table>
             </div>
           </Card>
         </>

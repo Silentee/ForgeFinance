@@ -259,10 +259,12 @@ export function PageHeader({ title, subtitle, action, extra }: {
 
     const setHeightVar = () => {
       const height = Math.ceil(el.getBoundingClientRect().height)
-      const mobileBarPx = parseFloat(
-        getComputedStyle(document.documentElement).getPropertyValue('--mobile-bar-height') || '0'
-      )
-      document.documentElement.style.setProperty('--page-header-height', `${height + (mobileBarPx || 0)}px`)
+      // The header is `sticky` with a responsive inset (`top-[var(--mobile-bar-height)]`
+      // on mobile, `md:top-0` on desktop). Read the *resolved* top so the offset is
+      // always correct per breakpoint — deriving it from --mobile-bar-height instead
+      // wrongly includes the mobile bar on desktop (where the header sticks at 0).
+      const stickyTop = parseFloat(getComputedStyle(el).top) || 0
+      document.documentElement.style.setProperty('--page-header-height', `${height + stickyTop}px`)
     }
 
     setHeightVar()
@@ -288,7 +290,7 @@ export function PageHeader({ title, subtitle, action, extra }: {
         </div>
         {action}
       </div>
-      {extra && <div className="mt-3">{extra}</div>}
+      {extra}
     </div>
   )
 }

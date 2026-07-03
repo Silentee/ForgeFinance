@@ -768,16 +768,8 @@ export default function AccountsPage() {
   const sortedAssetTypes = ASSET_TYPES.filter(t => assetGroups[t])
   const sortedLiabilityTypes = LIABILITY_TYPES.filter(t => liabilityGroups[t])
 
-  const totalAssets = assetAccounts.filter(a => a.include_in_net_worth).reduce((s, a) => s + (a.current_balance ?? 0), 0)
   const totalLiabilities = liabilityAccounts.filter(a => a.include_in_net_worth).reduce((s, a) => s + (a.current_balance ?? 0), 0)
   const displayedAssetsTotal = displayedAssets.filter(a => a.include_in_net_worth).reduce((s, a) => s + (a.current_balance ?? 0), 0)
-
-  const liquidAccounts = assetAccounts.filter(a => a.include_in_net_worth && a.is_liquid)
-  const totalLiquidity = liquidAccounts.reduce((s, a) => s + (a.current_balance ?? 0), 0)
-  const totalCash = liquidAccounts
-    .filter(a => (['checking', 'savings', 'hysa', 'cash'] as AccountType[]).includes(a.account_type))
-    .reduce((s, a) => s + (a.current_balance ?? 0), 0)
-  const totalInvested = totalLiquidity - totalCash
 
   const linkedAssetTotal = linkedPairs.reduce((s, p) => s + (p.asset.include_in_net_worth ? (p.asset.current_balance ?? 0) : 0), 0)
   const linkedLiabilityTotal = linkedPairs.reduce((s, p) => s + (p.liability.include_in_net_worth ? (p.liability.current_balance ?? 0) : 0), 0)
@@ -808,7 +800,7 @@ export default function AccountsPage() {
           </div>
         }
         extra={isCustomDate ? (
-          <div className="flex items-center gap-2 px-3 py-2 bg-amber-400/5 border border-amber-400/20 rounded-lg text-xs text-amber-300">
+          <div className="mt-3 flex items-center gap-2 px-3 py-2 bg-amber-400/5 border border-amber-400/20 rounded-lg text-xs text-amber-300">
             <svg viewBox="0 0 16 16" fill="currentColor" className="w-3.5 h-3.5 flex-shrink-0">
               <path fillRule="evenodd" d="M8 1a7 7 0 100 14A7 7 0 008 1zM7 5a1 1 0 112 0v3a1 1 0 11-2 0V5zm1 6a1 1 0 100-2 1 1 0 000 2z" clipRule="evenodd" />
             </svg>
@@ -817,48 +809,6 @@ export default function AccountsPage() {
           </div>
         ) : undefined}
       />
-
-      {/* Summary tiles */}
-      {/* Mobile order: Net Worth, Total Assets, Total Liquid, Total Liabilities, Cash, Liquid Investments */}
-      {/* Desktop order: Net Worth, Total Assets, Total Liabilities, Total Liquid, Cash, Liquid Investments */}
-      <div className="grid grid-cols-2 md:grid-cols-3 gap-3 md:gap-4">
-        <div className="order-1 md:order-1">
-          <Card>
-            <span className="label">Net Worth</span>
-            <div className="stat-value mt-1 text-ink-100">{formatCurrencyWhole(totalAssets - totalLiabilities)}</div>
-          </Card>
-        </div>
-        <div className="order-2 md:order-2">
-          <Card>
-            <span className="label">Total Assets</span>
-            <div className="stat-value mt-1 value-positive">{formatCurrencyWhole(totalAssets)}</div>
-          </Card>
-        </div>
-        <div className="order-3 md:order-4">
-          <Card>
-            <span className="label">Total Liquid</span>
-            <div className="stat-value mt-1 text-white-400">{formatCurrencyWhole(totalLiquidity)}</div>
-          </Card>
-        </div>
-        <div className="order-4 md:order-3">
-          <Card>
-            <span className="label">Total Liabilities</span>
-            <div className="stat-value mt-1 value-negative">{formatCurrencyWhole(totalLiabilities)}</div>
-          </Card>
-        </div>
-        <div className="order-5 md:order-5">
-          <Card>
-            <span className="label">Cash</span>
-            <div className="stat-value mt-1 text-ink-100">{formatCurrencyWhole(totalCash)}</div>
-          </Card>
-        </div>
-        <div className="order-6 md:order-6">
-          <Card>
-            <span className="label">Investments</span>
-            <div className="stat-value mt-1 text-ink-100">{formatCurrencyWhole(totalInvested)}</div>
-          </Card>
-        </div>
-      </div>
 
       {/* View mode toggle + liquid filter */}
       {!isLoading && (accounts?.length ?? 0) > 0 && (
