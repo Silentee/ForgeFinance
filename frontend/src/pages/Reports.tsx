@@ -1,9 +1,9 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
 import { useParams, Link } from 'react-router-dom'
-import { useNetWorthHistory, useSpendingTrends, useMonthlyTotals, useBudgetReport, useEquityHistory, useAccounts } from '@/hooks'
+import { useNetWorthHistory, useSpendingTrends, useSpendingAverages, useMonthlyTotals, useBudgetReport, useEquityHistory, useAccounts } from '@/hooks'
 import { Card, CardHeader, PageHeader, StatCard, Spinner, FilterDropdown, CheckboxRow } from '@/components/ui'
 import { formatCurrencyWhole, formatCurrencyCompact, formatCurrencySignedWhole, currentYearMonth, formatAccountType } from '@/lib/format'
-import type { AccountType, Account } from '@/types'
+import type { AccountType, Account, SpendingAverageLine } from '@/types'
 import {
   AreaChart, Area, XAxis, YAxis, Tooltip,
   ResponsiveContainer, CartesianGrid,
@@ -225,20 +225,12 @@ export default function ReportsPage() {
   const emergencyAnchorMonth = emergencyAnchorDate.getMonth() + 1
 
   const { data: nwHistory, isLoading: nwLoading } = useNetWorthHistory(nwMonths + 1)
-  // If viewing the current month, anchor averages to the previous month (incomplete month would skew averages)
+  // Note when the current (incomplete) month is selected — used for the on-screen note below.
   const isCurrentMonth = spendingYear === now.year && spendingMonth === now.month
-  const spendingAvgAnchor = (() => {
-    if (!isCurrentMonth) return { year: spendingYear, month: spendingMonth }
-    const d = new Date(spendingYear, spendingMonth - 1, 1)
-    d.setMonth(d.getMonth() - 1)
-    return { year: d.getFullYear(), month: d.getMonth() + 1 }
-  })()
-  const { data: spendingTrends, isLoading: spendingTrendsLoading } = useSpendingTrends({
-    months: 12,
-    year: spendingAvgAnchor.year,
-    month: spendingAvgAnchor.month,
-    top_n: 50,
-  })
+  // Per-category trailing averages — same source of truth the Budget page uses,
+  // so both pages show identical 3m/6m/12m values. Pass the raw selected month;
+  // the backend applies the current-month → previous-complete-month adjustment.
+  const { data: spendingAverages, isLoading: spendingAveragesLoading } = useSpendingAverages(spendingYear, spendingMonth)
   const { data: budgetReport, isLoading: budgetLoading } = useBudgetReport(spendingYear, spendingMonth)
   const { data: equityHistory, isLoading: equityLoading } = useEquityHistory(nwMonths + 1)
   const { data: cfTrends, isLoading: cfLoading } = useSpendingTrends({ months: cfMonths, year: cfAnchor.year, month: cfAnchor.month, top_n: 50 })
@@ -397,18 +389,11 @@ export default function ReportsPage() {
       : nwMode === 'equity' ? (selectedEquityPair?.current_equity ?? null)
         : (seriesCombined.length ? seriesCombined[seriesCombined.length - 1] : null)
 
-  // Spending tab: build per-category averages from 12-month trend data (anchored to last complete month)
-  const spendingExpenseSeries = spendingTrends?.series.filter(s => !s.is_income) ?? []
-  const spendingAvgMap = new Map<string, { avg3: number; avg6: number; avg12: number }>()
-  for (const s of spendingExpenseSeries) {
-    const t = s.monthly_totals
-    const avg = (arr: number[]) => arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : 0
-    spendingAvgMap.set(s.category_name, {
-      avg3: avg(t.slice(-Math.min(3, t.length))),
-      avg6: avg(t.slice(-Math.min(6, t.length))),
-      avg12: avg(t.slice(-Math.min(12, t.length))),
-    })
-  }
+  // Spending tab: per-category trailing averages, keyed by category_id, from the
+  // dedicated spending-averages endpoint (same data the Budget page uses).
+  const avgByCatId = new Map<number, SpendingAverageLine>()
+  for (const line of spendingAverages?.expense_lines ?? [])
+    if (line.category_id != null) avgByCatId.set(line.category_id, line)
 
   // Spending tab: merge budget lines with trend averages, grouped by parent
   const spendingRows = (() => {
@@ -418,7 +403,8 @@ export default function ReportsPage() {
       const parent = line.parent_category_name ?? 'Other'
       if (!groups.has(parent)) groups.set(parent, { actual: 0, budgeted: 0, avg3: 0, avg6: 0, avg12: 0, children: [] })
       const g = groups.get(parent)!
-      const avgs = spendingAvgMap.get(line.category_name) ?? { avg3: 0, avg6: 0, avg12: 0 }
+      const avgLine = line.category_id != null ? avgByCatId.get(line.category_id) : undefined
+      const avgs = { avg3: avgLine?.avg_3m ?? 0, avg6: avgLine?.avg_6m ?? 0, avg12: avgLine?.avg_12m ?? 0 }
       g.actual += line.actual
       g.budgeted += line.budgeted
       g.avg3 += avgs.avg3
@@ -630,7 +616,7 @@ export default function ReportsPage() {
             </div>
           </Card>
 
-          {(spendingTrendsLoading || budgetLoading) ? (
+          {(spendingAveragesLoading || budgetLoading) ? (
             <div className="flex justify-center py-16"><Spinner size="lg" /></div>
           ) : (
             <>
@@ -746,11 +732,11 @@ export default function ReportsPage() {
                                 ) : <span className="text-ink-500">—</span>}
                               </td>
                               {(() => {
-                                const met = spendingTrends?.monthly_expense_totals ?? []
-                                const avgSlice = (n: number) => { const s = met.slice(-Math.min(n, met.length)); return s.length ? s.reduce((a, b) => a + b, 0) / s.length : 0 }
-                                const totalAvg3 = avgSlice(3)
-                                const totalAvg6 = avgSlice(6)
-                                const totalAvg12 = avgSlice(12)
+                                // Total-row averages come from the same spending-averages source
+                                // as the per-category rows, so the total always equals the sum of rows.
+                                const totalAvg3 = spendingAverages?.total_expense_avg_3m ?? 0
+                                const totalAvg6 = spendingAverages?.total_expense_avg_6m ?? 0
+                                const totalAvg12 = spendingAverages?.total_expense_avg_12m ?? 0
                                 const actual = budgetReport.total_expenses_actual
                                 const fmtCell = (avg: number) => {
                                   if (!showDiff) return formatCurrencyWhole(avg)
