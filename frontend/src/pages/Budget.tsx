@@ -318,13 +318,14 @@ export default function BudgetPage() {
       return
     }
 
+    // Mark done up-front (like visibilityInitDone above) so re-renders from the
+    // mutation's own pending-state change don't re-enter and fire it again.
+    setAutoCarryDone(prev => new Set(prev).add(key))
+
     const payload: BudgetCreate[] = previousBudgets.map(b => ({
       category_id: b.category_id, year, month, amount: b.amount, notes: b.notes,
     }))
-    bulkCreateBudgets.mutate(payload, {
-      onSuccess: () => setAutoCarryDone(prev => new Set(prev).add(key)),
-      onError: () => setAutoCarryDone(prev => new Set(prev).add(key)),
-    })
+    bulkCreateBudgets.mutate(payload)
   }, [demoStatus, budgets, previousBudgets, year, month, now.year, now.month, autoCarryDone, bulkCreateBudgets])
 
   // ── Sync budget inputs from server (preserving the field being edited) ───────
