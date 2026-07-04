@@ -1,7 +1,7 @@
 import { useState, useCallback, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useDropzone } from 'react-dropzone'
-import { useAccounts, useImports, useUploadCsv, useDeleteImport, useImportBalanceCsv } from '@/hooks'
+import { useAccounts, useImports, useUploadCsv, useDeleteImport, useImportBalanceCsv, useAccountTypeMap } from '@/hooks'
 import { importsApi } from '@/lib/services'
 import { Card, CardHeader, PageHeader, Button, Spinner } from '@/components/ui'
 import { formatDate } from '@/lib/format'
@@ -76,6 +76,51 @@ function autoDetectCols(headerRow: string[]): Record<number, ColField> {
     else if (h === 'category') m[i] = 'category'
   }
   return m
+}
+
+// ─── Grouped account <select> options ──────────────────────────────────────
+// Groups accounts under their account type, ordered to match the Manage
+// Account Types dialog (by the type's sort_order).
+
+type AccountTypeView = ReturnType<typeof useAccountTypeMap>
+
+function GroupedAccountOptions({
+  accounts,
+  accountTypes,
+}: {
+  accounts: { id: number; name: string; account_type: string }[] | undefined
+  accountTypes: AccountTypeView
+}) {
+  if (!accounts?.length) return null
+
+  // Bucket accounts by their type key
+  const byType = new Map<string, typeof accounts>()
+  for (const a of accounts) {
+    const list = byType.get(a.account_type) ?? []
+    list.push(a)
+    byType.set(a.account_type, list)
+  }
+
+  // Emit groups in the account-type sort order, then any leftover types
+  const orderedKeys = accountTypes.ordered.map(t => t.key)
+  const remainingKeys = [...byType.keys()].filter(k => !orderedKeys.includes(k))
+  const groupKeys = [...orderedKeys, ...remainingKeys]
+
+  return (
+    <>
+      {groupKeys.map(key => {
+        const group = byType.get(key)
+        if (!group?.length) return null
+        return (
+          <optgroup key={key} label={accountTypes.label(key)}>
+            {group.map(a => (
+              <option key={a.id} value={a.id}>{a.name}</option>
+            ))}
+          </optgroup>
+        )
+      })}
+    </>
+  )
 }
 
 // ─── Custom CSV Mapper component ───────────────────────────────────────────
@@ -617,6 +662,7 @@ type ImportMode = 'transactions' | 'balance_history'
 export default function ImportPage() {
   const navigate = useNavigate()
   const { data: accounts } = useAccounts()
+  const accountTypes = useAccountTypeMap()
   const { data: imports, isLoading: importsLoading } = useImports()
   const { data: presets } = useQuery({ queryKey: ['import-presets'], queryFn: importsApi.getPresets })
   const uploadCsv = useUploadCsv()
@@ -785,9 +831,7 @@ export default function ImportPage() {
                 className="w-full bg-surface-700 border border-white/[0.08] rounded-lg px-3 py-2 text-sm text-ink-100 focus:outline-none focus:border-amber-400/40 transition-colors"
               >
                 <option value="">Select an account...</option>
-                {accounts?.map(a => (
-                  <option key={a.id} value={a.id}>{a.name}</option>
-                ))}
+                <GroupedAccountOptions accounts={accounts} accountTypes={accountTypes} />
               </select>
             </div>
 
@@ -966,7 +1010,7 @@ export default function ImportPage() {
                 className="w-full bg-surface-700 border border-white/[0.08] rounded-lg px-3 py-2 text-sm text-ink-100 focus:outline-none focus:border-amber-400/40 transition-colors"
               >
                 <option value="">Select an account...</option>
-                {accounts?.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
+                <GroupedAccountOptions accounts={accounts} accountTypes={accountTypes} />
               </select>
               <p className="text-2xs text-ink-400 mt-1.5">
                 CSV should have at least a date column and a balance column.
