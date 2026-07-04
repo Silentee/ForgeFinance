@@ -446,6 +446,14 @@ export default function BudgetPage() {
       bucket.avg6 += line.avg_6m; bucket.avg12 += line.avg_12m
     }
 
+    // Uncategorized spend (backend category_id == null) never appears as a real
+    // row — fold it into the Unbudgeted rollups so the table reconciles with the
+    // all-category grand totals below.
+    if (averages) {
+      addAvgs(unbudgetedIncome, averages.income_lines.find(l => l.category_id == null))
+      addAvgs(unbudgetedExpense, averages.expense_lines.find(l => l.category_id == null))
+    }
+
     for (const parent of parents) {
       for (const child of sortBySortOrder(parent.children)) {
         if (child.name.toLowerCase() === 'uncategorized') continue
@@ -488,7 +496,7 @@ export default function BudgetPage() {
     return parents
       .map(parent => ({ groupName: parent.name, rows: grouped.get(parent.name) ?? [] }))
       .filter(s => s.rows.length > 0)
-  }, [categories, avgByCat, visibleCategories])
+  }, [categories, avgByCat, visibleCategories, averages])
 
   // ── Every leaf category, grouped — used by the "select categories" mode ──────
   // Independent of visibleCategories so toggling a checkbox doesn't rebuild it;
@@ -526,6 +534,7 @@ export default function BudgetPage() {
   // ── Grand totals: budget and averages, scoped to the same editable rows shown in
   //    the table so the summary cards, the total rows, and each column all agree.
   const grandTotals = useMemo(() => {
+    // Budget amounts are scoped to the categories the user actually budgeted.
     const income: Avgs & { budget: number } = { budget: 0, ...emptyAvgs() }
     const expense: Avgs & { budget: number } = { budget: 0, ...emptyAvgs() }
     for (const section of sections) {
@@ -533,16 +542,25 @@ export default function BudgetPage() {
         if (!r.editable || r.categoryId == null) continue  // skip "Other" aggregate rows
         const t = r.isIncome ? income : expense
         t.budget += parseFloat(amounts[r.categoryId] ?? '') || 0
-        t.avg1 += r.avg1; t.avg3 += r.avg3; t.avg6 += r.avg6; t.avg12 += r.avg12
       }
     }
+    // Averages use the backend all-category totals so the Total rows match the
+    // Spending report and Dashboard (which also count every category).
+    income.avg1 = averages?.total_income_avg_1m ?? 0
+    income.avg3 = averages?.total_income_avg_3m ?? 0
+    income.avg6 = averages?.total_income_avg_6m ?? 0
+    income.avg12 = averages?.total_income_avg_12m ?? 0
+    expense.avg1 = averages?.total_expense_avg_1m ?? 0
+    expense.avg3 = averages?.total_expense_avg_3m ?? 0
+    expense.avg6 = averages?.total_expense_avg_6m ?? 0
+    expense.avg12 = averages?.total_expense_avg_12m ?? 0
     const net = {
       budget: income.budget - expense.budget,
       avg1: income.avg1 - expense.avg1, avg3: income.avg3 - expense.avg3,
       avg6: income.avg6 - expense.avg6, avg12: income.avg12 - expense.avg12,
     }
     return { income, expense, net }
-  }, [sections, amounts])
+  }, [sections, amounts, averages])
 
   const summaryTiles = averages ? [
     { label: 'Budgeted Income', budget: grandTotals.income.budget, isIncome: true },
