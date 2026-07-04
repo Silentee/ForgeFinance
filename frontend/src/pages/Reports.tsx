@@ -772,9 +772,9 @@ export default function ReportsPage() {
                           )
                         })()}
 
-                        {spendingRows.filter(group => showAllCategories || group.actual > 0).map(group => {
+                        {spendingRows.filter(group => showAllCategories || Math.abs(group.actual) > 0.000001 || group.children.some(child => Math.abs(child.actual) > 0.000001)).map(group => {
                           const groupExpanded = !isGroupCollapsed(group.parent)
-                          const visibleChildren = group.children.filter(child => showAllCategories || child.actual > 0)
+                          const visibleChildren = group.children.filter(child => showAllCategories || Math.abs(child.actual) > 0.000001)
                           return (
                           <>
                             {/* Parent group header */}
