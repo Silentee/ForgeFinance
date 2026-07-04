@@ -5,6 +5,8 @@ import { useDemoStatus, useClearDemo, useStartDemo, useCurrentUser, useChangePas
 import { exportApi } from '@/lib/services'
 import { clearToken } from '@/lib/api'
 import { Modal } from '@/components/ui'
+import { CategoryManager } from '@/components/settings/CategoryManager'
+import { AccountTypeManager } from '@/components/settings/AccountTypeManager'
 
 interface NavItem {
   to: string
@@ -85,6 +87,8 @@ export default function Sidebar() {
   const [showConfirm, setShowConfirm] = useState(false)
   const [showSettings, setShowSettings] = useState(false)
   const [showChangePassword, setShowChangePassword] = useState(false)
+  const [showCategoryManager, setShowCategoryManager] = useState(false)
+  const [showAccountTypeManager, setShowAccountTypeManager] = useState(false)
   const [pwForm, setPwForm] = useState({ current: '', new: '', confirm: '' })
   const [pwError, setPwError] = useState('')
   const settingsRef = useRef<HTMLDivElement>(null)
@@ -275,6 +279,27 @@ export default function Sidebar() {
                 </button>
               )}
               <div className="border-t border-white/[0.06]">
+                <p className="px-3 pt-2 pb-1 text-2xs text-ink-500 font-medium uppercase tracking-wide">Manage</p>
+                <button
+                  onClick={() => { setShowCategoryManager(true); setShowSettings(false) }}
+                  className="w-full text-left px-3 py-2.5 text-xs text-ink-200 hover:bg-white/[0.05] transition-colors flex items-center gap-2"
+                >
+                  <svg viewBox="0 0 20 20" fill="currentColor" className="w-3.5 h-3.5 text-ink-400">
+                    <path d="M7 3a1 1 0 000 2h6a1 1 0 100-2H7zM4 7a1 1 0 011-1h10a1 1 0 110 2H5a1 1 0 01-1-1zM2 11a2 2 0 012-2h12a2 2 0 012 2v4a2 2 0 01-2 2H4a2 2 0 01-2-2v-4z"/>
+                  </svg>
+                  Transaction Categories
+                </button>
+                <button
+                  onClick={() => { setShowAccountTypeManager(true); setShowSettings(false) }}
+                  className="w-full text-left px-3 py-2.5 text-xs text-ink-200 hover:bg-white/[0.05] transition-colors flex items-center gap-2"
+                >
+                  <svg viewBox="0 0 20 20" fill="currentColor" className="w-3.5 h-3.5 text-ink-400">
+                    <path d="M4 4a2 2 0 00-2 2v1h16V6a2 2 0 00-2-2H4z"/><path fillRule="evenodd" d="M18 9H2v5a2 2 0 002 2h12a2 2 0 002-2V9zM4 13a1 1 0 011-1h1a1 1 0 110 2H5a1 1 0 01-1-1z" clipRule="evenodd"/>
+                  </svg>
+                  Account Types
+                </button>
+              </div>
+              <div className="border-t border-white/[0.06]">
                 <p className="px-3 pt-2 pb-1 text-2xs text-ink-500 font-medium uppercase tracking-wide">Export</p>
                 <button
                   onClick={() => { exportApi.transactions(); setShowSettings(false) }}
@@ -335,6 +360,8 @@ export default function Sidebar() {
           </button>
         </div>
       </div>
+      {showCategoryManager && <CategoryManager onClose={() => setShowCategoryManager(false)} />}
+      {showAccountTypeManager && <AccountTypeManager onClose={() => setShowAccountTypeManager(false)} />}
       {showChangePassword && (
         <Modal onClose={() => { setShowChangePassword(false); setPwForm({ current: '', new: '', confirm: '' }); setPwError('') }}>
           <h2 className="text-base font-semibold text-ink-100 mb-4">Change Password</h2>

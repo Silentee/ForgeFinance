@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { useAccounts, useDeleteAccount, useCreateAccount, useUpdateAccount, useUpdateBalance, useBalanceHistory, useUpdateBalanceSnapshot, useDeleteBalanceSnapshot } from '@/hooks'
+import { useAccounts, useDeleteAccount, useCreateAccount, useUpdateAccount, useUpdateBalance, useBalanceHistory, useUpdateBalanceSnapshot, useDeleteBalanceSnapshot, useAccountTypeMap } from '@/hooks'
 import { Card, PageHeader, Button, AccountTypeDot, EmptyState, Spinner, Modal } from '@/components/ui'
 import { formatCurrency, formatCurrencyWhole, formatDate, formatAccountType, todayLocal } from '@/lib/format'
 import { importsApi } from '@/lib/services'
@@ -7,15 +7,8 @@ import type { Account, AccountCreate, AccountUpdate, AccountType } from '@/types
 import { useQuery } from '@tanstack/react-query'
 import clsx from 'clsx'
 
-const ASSET_TYPES: AccountType[] = [
-  'checking', 'savings', 'hysa', 'cash', 'precious_metal', 'investment', 'retirement', 'hsa', 'real_estate', 'vehicle', 'other_asset',
-]
-
-const LIABILITY_TYPES: AccountType[] = [
-  'credit_card', 'mortgage', 'car_loan', 'student_loan', 'personal_loan', 'other_liability',
-]
-
 function AccountTypeSelect({ value, onChange, required }: { value?: AccountType; onChange: (t: AccountType) => void; required?: boolean }) {
+  const { assets, liabilities } = useAccountTypeMap()
   return (
     <select
       value={value ?? ''}
@@ -25,13 +18,13 @@ function AccountTypeSelect({ value, onChange, required }: { value?: AccountType;
     >
       <option value="" disabled>Select account type...</option>
       <optgroup label="Assets">
-        {ASSET_TYPES.map(t => (
-          <option key={t} value={t}>{formatAccountType(t)}</option>
+        {assets.map(t => (
+          <option key={t.key} value={t.key}>{t.label}</option>
         ))}
       </optgroup>
       <optgroup label="Liabilities">
-        {LIABILITY_TYPES.map(t => (
-          <option key={t} value={t}>{formatAccountType(t)}</option>
+        {liabilities.map(t => (
+          <option key={t.key} value={t.key}>{t.label}</option>
         ))}
       </optgroup>
     </select>
@@ -40,6 +33,7 @@ function AccountTypeSelect({ value, onChange, required }: { value?: AccountType;
 
 function AddAccountModal({ allAccounts, onClose }: { allAccounts: Account[]; onClose: () => void }) {
   const create = useCreateAccount()
+  const accountTypes = useAccountTypeMap()
   const { data: presets } = useQuery({ queryKey: ['import-presets'], queryFn: importsApi.getPresets })
   const [form, setForm] = useState<Partial<AccountCreate> & { name: string }>({
     name: '', currency: 'USD',
@@ -47,7 +41,7 @@ function AddAccountModal({ allAccounts, onClose }: { allAccounts: Account[]; onC
   })
 
   // Check if the selected account type is an asset (not a liability)
-  const isAssetType = form.account_type && !LIABILITY_TYPES.includes(form.account_type)
+  const isAssetType = form.account_type ? !accountTypes.isLiability(form.account_type) : false
 
   // Get available liabilities for linking
   const availableLiabilities = allAccounts.filter(a => a.is_liability)
@@ -161,7 +155,7 @@ function AddAccountModal({ allAccounts, onClose }: { allAccounts: Account[]; onC
             <label className="flex items-center gap-2 cursor-pointer">
               <input
                 type="checkbox"
-                checked={form.is_liquid ?? (form.account_type ? ['checking', 'savings', 'hysa', 'cash', 'precious_metal', 'investment'].includes(form.account_type) : false)}
+                checked={form.is_liquid ?? (form.account_type ? (accountTypes.byKey.get(form.account_type)?.is_liquid_default ?? false) : false)}
                 onChange={e => setForm(f => ({ ...f, is_liquid: e.target.checked }))}
                 className="accent-amber-400"
               />
@@ -691,6 +685,7 @@ function AccountRow({
 
 export default function AccountsPage() {
   const { data: accounts, isLoading } = useAccounts({ active_only: false })
+  const accountTypes = useAccountTypeMap()
   const [showAdd, setShowAdd] = useState(false)
   const [detailAccount, setDetailAccount] = useState<Account | null>(null)
   const [editingBalanceAccountId, setEditingBalanceAccountId] = useState<number | null>(null)
@@ -765,8 +760,11 @@ export default function AccountsPage() {
     liabilityGroups[a.account_type].push(a)
   }
 
-  const sortedAssetTypes = ASSET_TYPES.filter(t => assetGroups[t])
-  const sortedLiabilityTypes = LIABILITY_TYPES.filter(t => liabilityGroups[t])
+  // Sort the type groups by each type's configured sort_order. Any type still
+  // in use but hidden (not in the map) falls to the end.
+  const typeOrder = (k: string) => accountTypes.byKey.get(k)?.sort_order ?? 999
+  const sortedAssetTypes = Object.keys(assetGroups).sort((a, b) => typeOrder(a) - typeOrder(b))
+  const sortedLiabilityTypes = Object.keys(liabilityGroups).sort((a, b) => typeOrder(a) - typeOrder(b))
 
   const totalLiabilities = liabilityAccounts.filter(a => a.include_in_net_worth).reduce((s, a) => s + (a.current_balance ?? 0), 0)
   const displayedAssetsTotal = displayedAssets.filter(a => a.include_in_net_worth).reduce((s, a) => s + (a.current_balance ?? 0), 0)

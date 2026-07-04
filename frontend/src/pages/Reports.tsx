@@ -1,8 +1,8 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
 import { useParams, Link } from 'react-router-dom'
-import { useNetWorthHistory, useSpendingTrends, useSpendingAverages, useMonthlyTotals, useBudgetReport, useEquityHistory, useAccounts } from '@/hooks'
+import { useNetWorthHistory, useSpendingTrends, useSpendingAverages, useMonthlyTotals, useBudgetReport, useEquityHistory, useAccounts, useAccountTypeMap } from '@/hooks'
 import { Card, CardHeader, PageHeader, StatCard, Spinner, FilterDropdown, CheckboxRow } from '@/components/ui'
-import { formatCurrencyWhole, formatCurrencyCompact, formatCurrencySignedWhole, currentYearMonth, formatAccountType } from '@/lib/format'
+import { formatCurrencyWhole, formatCurrencyCompact, formatCurrencySignedWhole, currentYearMonth } from '@/lib/format'
 import type { AccountType, Account, SpendingAverageLine } from '@/types'
 import {
   AreaChart, Area, XAxis, YAxis, Tooltip,
@@ -41,11 +41,6 @@ const CHART_COLORS = [
   '#f5a623', '#34d4b1', '#f87171', '#818cf8', '#34d4b1',
   '#fb923c', '#a78bfa', '#22d3ee', '#4ade80', '#f472b6',
 ]
-const ACCOUNT_TYPE_ORDER: AccountType[] = [
-  'checking', 'savings', 'hysa', 'cash', 'precious_metal', 'investment', 'retirement', 'hsa', 'real_estate', 'vehicle', 'other_asset',
-  'credit_card', 'mortgage', 'car_loan', 'student_loan', 'personal_loan', 'other_liability',
-]
-
 // Budget progress bar with a marker showing where the budget line falls relative to spending.
 // Under budget: fill shows how far spent, marker pinned to the far right (budget = 100%).
 // Over budget: fill is full (red), marker slides left as the overage grows (budget / actual).
@@ -235,6 +230,7 @@ export default function ReportsPage() {
   const { data: equityHistory, isLoading: equityLoading } = useEquityHistory(nwMonths + 1)
   const { data: cfTrends, isLoading: cfLoading } = useSpendingTrends({ months: cfMonths, year: cfAnchor.year, month: cfAnchor.month, top_n: 50 })
   const { data: accounts } = useAccounts({ active_only: false })
+  const accountTypes = useAccountTypeMap()
   const { data: emergencyTrends, isLoading: emergencyLoading } = useSpendingTrends({ months: 12, top_n: 20, year: emergencyAnchorYear, month: emergencyAnchorMonth })
   // Net worth chart data — trim leading months with no real balance data, and trailing current (partial) month
   const nwDataRaw = nwHistory?.data_points.map(p => ({
@@ -310,7 +306,11 @@ export default function ReportsPage() {
   // ── "Accounts & Groups" series (individual accounts, type groups, quick filters) ──
   const accountMap = new Map((accounts ?? []).map(a => [a.id, a]))
   const activeAccounts = (accounts ?? []).filter(a => a.is_active)
-  const presentTypes = ACCOUNT_TYPE_ORDER.filter(t => activeAccounts.some(a => a.account_type === t))
+  // Account-type groups present among active accounts, ordered by each type's
+  // configured sort_order (types hidden/absent from the map fall to the end).
+  const typeOrder = (k: string) => accountTypes.byKey.get(k)?.sort_order ?? 999
+  const presentTypes = Array.from(new Set(activeAccounts.map(a => a.account_type)))
+    .sort((a, b) => typeOrder(a) - typeOrder(b))
 
   const resolveSeriesAccountIds = (ref: SeriesRef): number[] => {
     if (ref.kind === 'account') return [ref.id]
@@ -321,7 +321,7 @@ export default function ReportsPage() {
   }
   const seriesLabel = (ref: SeriesRef): string => {
     if (ref.kind === 'account') return accountMap.get(ref.id)?.name ?? `Account ${ref.id}`
-    if (ref.kind === 'group') return `All ${formatAccountType(ref.accountType)}`
+    if (ref.kind === 'group') return `All ${accountTypes.label(ref.accountType)}`
     return FILTER_LABELS[ref.filter]
   }
   const resolvedSeries = selectedSeries.map((ref, i) => ({
@@ -947,7 +947,7 @@ export default function ReportsPage() {
                               <CheckboxRow
                                 checked={groupSelected}
                                 indeterminate={!groupSelected && selectedChildCount > 0}
-                                label={`All ${formatAccountType(t)}`}
+                                label={`All ${accountTypes.label(t)}`}
                                 sublabel={selectedChildCount > 0 ? `${selectedChildCount}/${typeAccounts.length} accounts selected` : undefined}
                                 bold
                                 onToggle={() => toggleSeries(groupRef)}

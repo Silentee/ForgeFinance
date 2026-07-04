@@ -5,6 +5,7 @@ from app.api.endpoints import (
     auth,
     institutions,
     accounts,
+    account_types,
     transactions,
     imports,
     balances,
@@ -24,6 +25,7 @@ api_router.include_router(auth.router, prefix="/auth", tags=["Auth"])
 protected = APIRouter(dependencies=[Depends(get_current_user)])
 protected.include_router(institutions.router, prefix="/institutions", tags=["Institutions"])
 protected.include_router(accounts.router,     prefix="/accounts",     tags=["Accounts"])
+protected.include_router(account_types.router, prefix="/account-types", tags=["Account Types"])
 protected.include_router(transactions.router, prefix="/transactions", tags=["Transactions"])
 protected.include_router(imports.router,      prefix="/imports",      tags=["CSV Import"])
 protected.include_router(balances.router,     prefix="/balances",     tags=["Balances"])

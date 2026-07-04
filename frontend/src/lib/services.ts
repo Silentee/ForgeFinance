@@ -2,9 +2,10 @@ import { apiClient, setToken } from './api'
 import { todayLocal } from './format'
 import type {
   Account, AccountCreate, AccountUpdate, NetWorthSummary,
+  AccountTypeDef, AccountTypeCreate, AccountTypeUpdate,
   Institution, InstitutionCreate,
   Transaction, TransactionUpdate, TransactionCreate,
-  Category, CategoryCreate,
+  Category, CategoryCreate, CategoryUpdate,
   Budget, BudgetCreate, BudgetUpdate,
   BudgetVisibleCategories, BudgetVisibleCategoriesUpsert,
   BudgetReport, CashFlowReport, NetWorthHistory, SpendingTrendsReport, SpendingAveragesReport, MonthlyTotalsReport, EquityHistoryReport,
@@ -135,17 +136,33 @@ export const transactionsApi = {
 // ─── Categories ───────────────────────────────────────────────────────────────
 
 export const categoriesApi = {
-  list: (params?: { flat?: boolean; income_only?: boolean; expense_only?: boolean }) =>
+  list: (params?: { flat?: boolean; income_only?: boolean; expense_only?: boolean; include_hidden?: boolean }) =>
     apiClient.get<Category[]>('/categories', { params }).then(r => r.data),
 
   create: (data: CategoryCreate) =>
     apiClient.post<Category>('/categories', data).then(r => r.data),
 
-  update: (id: number, data: Partial<CategoryCreate>) =>
+  update: (id: number, data: CategoryUpdate) =>
     apiClient.patch<Category>(`/categories/${id}`, data).then(r => r.data),
 
   delete: (id: number) =>
     apiClient.delete(`/categories/${id}`),
+}
+
+// ─── Account Types ────────────────────────────────────────────────────────────
+
+export const accountTypesApi = {
+  list: (params?: { include_hidden?: boolean }) =>
+    apiClient.get<AccountTypeDef[]>('/account-types', { params }).then(r => r.data),
+
+  create: (data: AccountTypeCreate) =>
+    apiClient.post<AccountTypeDef>('/account-types', data).then(r => r.data),
+
+  update: (id: number, data: AccountTypeUpdate) =>
+    apiClient.patch<AccountTypeDef>(`/account-types/${id}`, data).then(r => r.data),
+
+  delete: (id: number) =>
+    apiClient.delete(`/account-types/${id}`),
 }
 
 // ─── Budgets ──────────────────────────────────────────────────────────────────

@@ -13,13 +13,15 @@ def list_categories(
     flat: bool = Query(False, description="If True, return a flat list instead of tree"),
     income_only: bool = Query(False),
     expense_only: bool = Query(False),
+    include_hidden: bool = Query(False, description="Include hidden categories (for the manager UI)"),
     db: Session = Depends(get_db),
 ):
     """
     Return all categories.
 
-    By default returns a nested tree (parent categories with children embedded).
-    Pass flat=true for a simple list, which is more useful for dropdowns.
+    By default returns a nested tree (parent categories with children embedded)
+    and excludes hidden categories. Pass flat=true for a simple list (useful for
+    dropdowns) or include_hidden=true for the category manager.
     """
     q = db.query(Category)
 
@@ -27,14 +29,26 @@ def list_categories(
         q = q.filter(Category.is_income == True)
     if expense_only:
         q = q.filter(Category.is_income == False)
+    if not include_hidden:
+        q = q.filter(Category.is_hidden == False)
 
-    all_cats = q.order_by(Category.is_income.desc(), Category.name).all()
+    all_cats = q.order_by(Category.is_income.desc(), Category.sort_order, Category.name).all()
 
     if flat:
         return all_cats
 
-    # Build tree: only return top-level categories; children are nested via relationship
-    return [c for c in all_cats if c.parent_id is None]
+    # Build the tree from the already-filtered list so hidden children don't
+    # leak in via the (unfiltered) ORM relationship.
+    by_parent: dict = {}
+    for c in all_cats:
+        by_parent.setdefault(c.parent_id, []).append(c)
+
+    def to_read(cat: Category) -> CategoryRead:
+        node = CategoryRead.model_validate(cat)
+        node.children = [to_read(ch) for ch in by_parent.get(cat.id, [])]
+        return node
+
+    return [to_read(c) for c in all_cats if c.parent_id is None]
 
 
 @router.post("", response_model=CategoryRead, status_code=status.HTTP_201_CREATED)

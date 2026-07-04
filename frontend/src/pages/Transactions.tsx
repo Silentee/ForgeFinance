@@ -2,7 +2,7 @@ import { useState, useMemo, useEffect, useRef } from 'react'
 import { Link, useLocation } from 'react-router-dom'
 import { useTransactions, useAccounts, useCategories, useCreateTransaction, useUpdateTransaction, useDeleteTransaction } from '@/hooks'
 import { Card, PageHeader, Button, EmptyState, Spinner, Modal, FilterDropdown, CheckboxRow } from '@/components/ui'
-import { formatCurrency, formatDate, toLocalDateString, todayLocal } from '@/lib/format'
+import { formatCurrency, formatDate, toLocalDateString, todayLocal, sortBySortOrder } from '@/lib/format'
 import type { Transaction, TransactionUpdate, TransactionCreate, TransactionType, Category } from '@/types'
 import clsx from 'clsx'
 
@@ -67,41 +67,14 @@ function flattenCategories(cats: Category[]): Category[] {
   return cats.flatMap(c => [c, ...flattenCategories(c.children)])
 }
 
-const ESSENTIAL_CATEGORY_ORDER = [
-  'Rent/Mortgage',
-  'Property Tax',
-  'HOA',
-  'Home Maintenance & Repairs',
-  'Home Insurance',
-  'Car Insurance',
-  'Other Insurance',
-  'Groceries',
-]
-
-function sortCategoryChildren(parentName: string, children: Category[]): Category[] {
-  if (parentName !== 'Essential') return children
-  const filtered = children.filter(c => c.name !== 'Life Insurance')
-  return [...filtered].sort((a, b) => {
-    const aIdx = ESSENTIAL_CATEGORY_ORDER.indexOf(a.name)
-    const bIdx = ESSENTIAL_CATEGORY_ORDER.indexOf(b.name)
-    return (aIdx === -1 ? 999 : aIdx) - (bIdx === -1 ? 999 : bIdx)
-  })
-}
-
 function CategorySelect({ value, onChange, categories }: {
   value: number | undefined
   onChange: (id: number | undefined) => void
   categories: Category[]
 }) {
-  // Group categories: parent categories that have children become optgroups
-  // Explicit order: Income, Essential, Utilities, Lifestyle, Financial, Other
-  const groupOrder = ['Income', 'Essential', 'Utilities', 'Lifestyle', 'Financial', 'Other']
-  const parentCategories = categories.filter(c => c.children.length > 0)
-  const sortedGroups = parentCategories.sort((a, b) => {
-    const aIdx = groupOrder.indexOf(a.name)
-    const bIdx = groupOrder.indexOf(b.name)
-    return (aIdx === -1 ? 999 : aIdx) - (bIdx === -1 ? 999 : bIdx)
-  })
+  // Parent categories with children become optgroups, ordered by their
+  // configured sort_order (editable in the Category manager).
+  const sortedGroups = sortBySortOrder(categories.filter(c => c.children.length > 0))
 
   return (
     <select
@@ -112,7 +85,7 @@ function CategorySelect({ value, onChange, categories }: {
       <option value="">Uncategorized</option>
       {sortedGroups.map(parent => (
         <optgroup key={parent.id} label={parent.name}>
-          {sortCategoryChildren(parent.name, parent.children).map(child => (
+          {sortBySortOrder(parent.children).map(child => (
             <option key={child.id} value={child.id}>{child.name}</option>
           ))}
         </optgroup>
@@ -773,18 +746,12 @@ export default function TransactionsPage() {
               />
               <div className="h-px bg-white/[0.06] my-1" />
               {(() => {
-                const groupOrder = ['Income', 'Essential', 'Utilities', 'Lifestyle', 'Financial', 'Other']
-                const parents = (categories ?? []).filter(c => c.children.length > 0)
-                  .sort((a, b) => {
-                    const aIdx = groupOrder.indexOf(a.name)
-                    const bIdx = groupOrder.indexOf(b.name)
-                    return (aIdx === -1 ? 999 : aIdx) - (bIdx === -1 ? 999 : bIdx)
-                  })
+                const parents = sortBySortOrder((categories ?? []).filter(c => c.children.length > 0))
 
                 const selectedSet = new Set(categoryFilter.mode === 'selected' ? categoryFilter.categoryIds : [])
 
                 return parents.map(parent => {
-                  const children = sortCategoryChildren(parent.name, parent.children)
+                  const children = sortBySortOrder(parent.children)
                   const childIds = children.map(c => c.id)
                   const selectedCount = childIds.filter(id => selectedSet.has(id)).length
                   const allSelected = selectedCount > 0 && selectedCount === childIds.length

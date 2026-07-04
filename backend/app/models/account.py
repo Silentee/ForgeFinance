@@ -4,7 +4,7 @@ from sqlalchemy import String, Boolean, DateTime, Numeric, Text, ForeignKey, Enu
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.session import Base
-from app.models.enums import AccountType, AccountSubtype
+from app.models.enums import AccountSubtype
 
 
 class Institution(Base):
@@ -53,9 +53,10 @@ class Account(Base):
     id: Mapped[int] = mapped_column(primary_key=True, index=True)
 
     name: Mapped[str] = mapped_column(String(255), nullable=False)
-    account_type: Mapped[AccountType] = mapped_column(
-        SAEnum(AccountType), nullable=False, index=True
-    )
+    # Stores the `key` of an AccountTypeDef row (e.g. "checking"). Previously a
+    # SAEnum(AccountType) column — in SQLite that was already a VARCHAR holding
+    # the same string value, so existing rows remain valid without migration.
+    account_type: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
     account_subtype: Mapped[Optional[AccountSubtype]] = mapped_column(
         SAEnum(AccountSubtype), nullable=True
     )
@@ -134,16 +135,18 @@ class Account(Base):
         backref="linked_assets",
     )
 
+    # Resolve the account type definition by matching account_type -> key.
+    # viewonly so it never participates in writes; account_type is a plain string.
+    type_def = relationship(
+        "AccountTypeDef",
+        viewonly=True,
+        uselist=False,
+        primaryjoin="foreign(Account.account_type) == AccountTypeDef.key",
+    )
+
     @property
     def is_liability(self) -> bool:
-        return self.account_type in (
-            AccountType.CREDIT_CARD,
-            AccountType.MORTGAGE,
-            AccountType.CAR_LOAN,
-            AccountType.STUDENT_LOAN,
-            AccountType.PERSONAL_LOAN,
-            AccountType.OTHER_LIABILITY,
-        )
+        return bool(self.type_def and self.type_def.is_liability)
 
     @property
     def net_worth_value(self) -> float:

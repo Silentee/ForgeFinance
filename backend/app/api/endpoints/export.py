@@ -79,7 +79,7 @@ def export_balances(db: Session = Depends(get_db)):
         acct = account_map.get(s.account_id)
         rows.append({
             'account': acct.name if acct else '',
-            'account_type': acct.account_type.value if acct and acct.account_type else '',
+            'account_type': acct.account_type if acct and acct.account_type else '',
             'snapshot_date': s.snapshot_date.isoformat() if s.snapshot_date else '',
             'balance': f'{s.balance:.2f}',
             'notes': s.notes or '',

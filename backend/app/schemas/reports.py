@@ -80,6 +80,8 @@ class CategoryBase(BaseModel):
     icon: Optional[str] = None
     parent_id: Optional[int] = None
     notes: Optional[str] = None
+    sort_order: int = 0
+    is_hidden: bool = False
 
 
 class CategoryCreate(CategoryBase):
@@ -93,6 +95,8 @@ class CategoryUpdate(BaseModel):
     icon: Optional[str] = None
     parent_id: Optional[int] = None
     notes: Optional[str] = None
+    sort_order: Optional[int] = None
+    is_hidden: Optional[bool] = None
 
 
 class CategoryRead(CategoryBase):

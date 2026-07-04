@@ -1,8 +1,8 @@
 // ─── Enums ────────────────────────────────────────────────────────────────────
 
-export type AccountType =
-  | 'checking' | 'savings' | 'hysa' | 'cash' | 'precious_metal' | 'investment' | 'retirement' | 'hsa' | 'real_estate' | 'vehicle' | 'other_asset'
-  | 'credit_card' | 'mortgage' | 'car_loan' | 'student_loan' | 'personal_loan' | 'other_liability'
+// Account type is now the `key` of a user-editable AccountTypeDef row, so it is
+// an open string rather than a fixed union. See AccountTypeDef below.
+export type AccountType = string
 
 export type AccountSubtype =
   | 'checking' | 'savings' | 'money_market' | 'cd'
@@ -104,6 +104,35 @@ export interface NetWorthSummary {
   accounts_by_type: Record<string, number>
 }
 
+// ─── Account Types (editable definitions) ─────────────────────────────────────
+
+export interface AccountTypeDef {
+  id: number
+  key: string
+  label: string
+  is_liability: boolean
+  is_liquid_default: boolean
+  is_system: boolean
+  is_hidden: boolean
+  sort_order: number
+}
+
+export interface AccountTypeCreate {
+  label: string
+  is_liability?: boolean
+  is_liquid_default?: boolean
+  key?: string
+  sort_order?: number
+}
+
+export interface AccountTypeUpdate {
+  label?: string
+  is_liability?: boolean
+  is_liquid_default?: boolean
+  is_hidden?: boolean
+  sort_order?: number
+}
+
 // ─── Transactions ─────────────────────────────────────────────────────────────
 
 export interface Transaction {
@@ -166,6 +195,8 @@ export interface Category {
   icon?: string
   parent_id?: number
   notes?: string
+  sort_order: number
+  is_hidden: boolean
   children: Category[]
 }
 
@@ -175,6 +206,17 @@ export interface CategoryCreate {
   color?: string
   icon?: string
   parent_id?: number
+  sort_order?: number
+}
+
+export interface CategoryUpdate {
+  name?: string
+  is_income?: boolean
+  color?: string
+  icon?: string
+  parent_id?: number
+  sort_order?: number
+  is_hidden?: boolean
 }
 
 // ─── Budgets ──────────────────────────────────────────────────────────────────

@@ -4,7 +4,7 @@ import {
   useDemoStatus, useBudgetVisibleCategories, useSetBudgetVisibleCategories, useSpendingAverages,
 } from '@/hooks'
 import { Card, PageHeader, Button, Spinner, Modal } from '@/components/ui'
-import { formatCurrencyWhole, formatCurrencySignedWhole, currentYearMonth } from '@/lib/format'
+import { formatCurrencyWhole, formatCurrencySignedWhole, currentYearMonth, sortBySortOrder } from '@/lib/format'
 import type { Category, BudgetCreate, SpendingAverageLine } from '@/types'
 import clsx from 'clsx'
 
@@ -12,30 +12,6 @@ const MONTHS = [
   'January','February','March','April','May','June',
   'July','August','September','October','November','December'
 ]
-
-// Order for parent category groups
-const GROUP_ORDER = ['Income', 'Essential', 'Utilities', 'Lifestyle', 'Financial', 'Other']
-
-const ESSENTIAL_CATEGORY_ORDER = [
-  'Rent/Mortgage',
-  'Property Tax',
-  'HOA',
-  'Home Maintenance & Repairs',
-  'Home Insurance',
-  'Car Insurance',
-  'Other Insurance',
-  'Groceries',
-]
-
-function sortCategoryChildren(parentName: string, children: Category[]): Category[] {
-  if (parentName !== 'Essential') return children
-  const filtered = children.filter(c => c.name !== 'Life Insurance')
-  return [...filtered].sort((a, b) => {
-    const aIdx = ESSENTIAL_CATEGORY_ORDER.indexOf(a.name)
-    const bIdx = ESSENTIAL_CATEGORY_ORDER.indexOf(b.name)
-    return (aIdx === -1 ? 999 : aIdx) - (bIdx === -1 ? 999 : bIdx)
-  })
-}
 
 // Categories checked by default when demo data is active
 const DEMO_DEFAULT_VISIBLE = new Set([
@@ -456,14 +432,10 @@ export default function BudgetPage() {
   const sections = useMemo<Section[]>(() => {
     if (!categories) return []
 
-    const parents = [...categories].filter(c => c.children.length > 0).sort((a, b) => {
-      const aIdx = GROUP_ORDER.indexOf(a.name)
-      const bIdx = GROUP_ORDER.indexOf(b.name)
-      return (aIdx === -1 ? 999 : aIdx) - (bIdx === -1 ? 999 : bIdx)
-    })
+    const parents = sortBySortOrder(categories.filter(c => c.children.length > 0))
 
     const grouped = new Map<string, BudgetRow[]>()
-    GROUP_ORDER.forEach(g => grouped.set(g, []))
+    parents.forEach(p => grouped.set(p.name, []))
 
     const unbudgetedIncome = emptyAvgs()
     const unbudgetedExpense = emptyAvgs()
@@ -475,7 +447,7 @@ export default function BudgetPage() {
     }
 
     for (const parent of parents) {
-      for (const child of sortCategoryChildren(parent.name, parent.children)) {
+      for (const child of sortBySortOrder(parent.children)) {
         if (child.name.toLowerCase() === 'uncategorized') continue
         const line = avgByCat.get(child.id)
 
@@ -513,8 +485,8 @@ export default function BudgetPage() {
       })
     }
 
-    return GROUP_ORDER
-      .map(groupName => ({ groupName, rows: grouped.get(groupName) ?? [] }))
+    return parents
+      .map(parent => ({ groupName: parent.name, rows: grouped.get(parent.name) ?? [] }))
       .filter(s => s.rows.length > 0)
   }, [categories, avgByCat, visibleCategories])
 
@@ -524,17 +496,13 @@ export default function BudgetPage() {
   const selectSections = useMemo<Section[]>(() => {
     if (!categories) return []
 
-    const parents = [...categories].filter(c => c.children.length > 0).sort((a, b) => {
-      const aIdx = GROUP_ORDER.indexOf(a.name)
-      const bIdx = GROUP_ORDER.indexOf(b.name)
-      return (aIdx === -1 ? 999 : aIdx) - (bIdx === -1 ? 999 : bIdx)
-    })
+    const parents = sortBySortOrder(categories.filter(c => c.children.length > 0))
 
     const grouped = new Map<string, BudgetRow[]>()
-    GROUP_ORDER.forEach(g => grouped.set(g, []))
+    parents.forEach(p => grouped.set(p.name, []))
 
     for (const parent of parents) {
-      for (const child of sortCategoryChildren(parent.name, parent.children)) {
+      for (const child of sortBySortOrder(parent.children)) {
         if (child.name.toLowerCase() === 'uncategorized') continue
         const line = avgByCat.get(child.id)
         grouped.get(parent.name)?.push({
@@ -550,8 +518,8 @@ export default function BudgetPage() {
       }
     }
 
-    return GROUP_ORDER
-      .map(groupName => ({ groupName, rows: grouped.get(groupName) ?? [] }))
+    return parents
+      .map(parent => ({ groupName: parent.name, rows: grouped.get(parent.name) ?? [] }))
       .filter(s => s.rows.length > 0)
   }, [categories, avgByCat])
 

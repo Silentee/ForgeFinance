@@ -8,8 +8,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File, 
 from sqlalchemy.orm import Session, joinedload
 
 from app.db.session import get_db
-from app.models import Account, BalanceSnapshot, Institution
-from app.models.enums import AccountType, BalanceType
+from app.models import Account, AccountTypeDef, BalanceSnapshot, Institution
+from app.models.enums import BalanceType
 from app.schemas import (
     AccountCreate, AccountUpdate, AccountRead, AccountSummary, NetWorthSummary
 )
@@ -60,7 +60,7 @@ def _update_account_balance(
 @router.get("", response_model=list[AccountSummary])
 def list_accounts(
     active_only: bool = Query(True, description="Filter to active accounts only"),
-    account_type: Optional[AccountType] = Query(None),
+    account_type: Optional[str] = Query(None),
     db: Session = Depends(get_db),
 ):
     """List all accounts, optionally filtered by type or active status."""
@@ -90,7 +90,7 @@ def get_net_worth(db: Session = Depends(get_db)):
 
     for acct in accounts:
         val = acct.net_worth_value  # already sign-adjusted
-        type_key = acct.account_type.value
+        type_key = acct.account_type
         by_type[type_key] = by_type.get(type_key, 0.0) + val
 
         if acct.is_liability:
@@ -106,15 +106,11 @@ def get_net_worth(db: Session = Depends(get_db)):
     )
 
 
-# Account types that default to liquid
-LIQUID_ACCOUNT_TYPES = {
-    AccountType.CHECKING,
-    AccountType.SAVINGS,
-    AccountType.HYSA,
-    AccountType.CASH,
-    AccountType.PRECIOUS_METAL,
-    AccountType.INVESTMENT,
-}
+def _get_type_def_or_400(key: str, db: Session) -> AccountTypeDef:
+    type_def = db.query(AccountTypeDef).filter(AccountTypeDef.key == key).first()
+    if not type_def:
+        raise HTTPException(status_code=400, detail=f"Unknown account type: {key!r}")
+    return type_def
 
 
 @router.post("", response_model=AccountRead, status_code=status.HTTP_201_CREATED)
@@ -129,11 +125,13 @@ def create_account(payload: AccountCreate, db: Session = Depends(get_db)):
         if not institution:
             raise HTTPException(status_code=404, detail="Institution not found")
 
+    type_def = _get_type_def_or_400(payload.account_type, db)
+
     data = payload.model_dump(exclude={"initial_balance"})
 
     # Default is_liquid based on account type if not explicitly set
     if data.get("is_liquid") is None:
-        data["is_liquid"] = payload.account_type in LIQUID_ACCOUNT_TYPES
+        data["is_liquid"] = type_def.is_liquid_default
 
     account = Account(**data)
     db.add(account)
@@ -165,6 +163,9 @@ def update_account(
         institution = db.query(Institution).get(payload.institution_id)
         if not institution:
             raise HTTPException(status_code=404, detail="Institution not found")
+
+    if payload.account_type is not None:
+        _get_type_def_or_400(payload.account_type, db)
 
     for field, value in payload.model_dump(exclude_unset=True).items():
         setattr(account, field, value)

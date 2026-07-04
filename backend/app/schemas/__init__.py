@@ -2,6 +2,9 @@ from app.schemas.institution import InstitutionCreate, InstitutionUpdate, Instit
 from app.schemas.account import (
     AccountCreate, AccountUpdate, AccountRead, AccountSummary, NetWorthSummary
 )
+from app.schemas.account_type import (
+    AccountTypeCreate, AccountTypeUpdate, AccountTypeRead
+)
 from app.schemas.transaction import (
     TransactionCreate, TransactionUpdate, TransactionRead, TransactionFilter
 )

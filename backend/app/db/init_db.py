@@ -10,7 +10,11 @@ from datetime import date, datetime, timedelta
 from decimal import Decimal
 
 from app.db.session import engine, SessionLocal, Base
-from app.models import Category, Account, Transaction, BalanceSnapshot, Budget, DEFAULT_CATEGORIES
+from app.models import (
+    Category, Account, Transaction, BalanceSnapshot, Budget,
+    DEFAULT_CATEGORIES, DEFAULT_SORT_ORDER,
+    AccountTypeDef, DEFAULT_ACCOUNT_TYPES,
+)
 from app.models.enums import AccountType, TransactionType, BalanceType
 
 # Import all models so they're registered with Base.metadata
@@ -168,6 +172,8 @@ def run_migrations():
 
     migrations = [
         "ALTER TABLE transactions ADD COLUMN is_annualized BOOLEAN NOT NULL DEFAULT 0",
+        "ALTER TABLE categories ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0",
+        "ALTER TABLE categories ADD COLUMN is_hidden BOOLEAN NOT NULL DEFAULT 0",
     ]
     with engine.connect() as conn:
         for sql in migrations:
@@ -179,9 +185,51 @@ def run_migrations():
 
     db = SessionLocal()
     try:
+        migrate_account_type_values(db)
         migrate_category_taxonomy(db)
+        backfill_category_sort_order(db)
     finally:
         db.close()
+
+
+def migrate_account_type_values(db):
+    """
+    The old account_type column was a SAEnum, which persisted the enum *name*
+    (e.g. "CHECKING"), not its value (e.g. "checking"). Now that account types
+    are DB-backed and keyed by the lowercase value, convert any legacy rows so
+    they match AccountTypeDef.key. Idempotent — converted rows no longer match.
+    """
+    changed = 0
+    for member in AccountType:
+        if member.name == member.value:
+            continue
+        updated = (
+            db.query(Account)
+            .filter(Account.account_type == member.name)
+            .update({Account.account_type: member.value}, synchronize_session=False)
+        )
+        changed += updated
+    if changed:
+        db.commit()
+        print(f"  Converted {changed} account(s) to keyed account types.")
+
+
+def backfill_category_sort_order(db):
+    """
+    Give existing categories (created before the sort_order column existed) the
+    default ordering by matching on name. Only touches rows still at the default
+    0 so user-customized ordering is never overwritten.
+    """
+    rows = db.query(Category).filter(Category.sort_order == 0).all()
+    changed = False
+    for cat in rows:
+        default = DEFAULT_SORT_ORDER.get(cat.name)
+        if default is not None and default != 0:
+            cat.sort_order = default
+            changed = True
+    if changed:
+        db.commit()
+        print("  Category sort_order backfilled.")
 
 
 def seed_categories(db):
@@ -224,6 +272,30 @@ def seed_categories(db):
         print("  Done: All default categories already present.")
 
 
+def seed_account_types(db):
+    """Insert the built-in account types, creating any that are missing."""
+    print("  Checking default account types...")
+    created = 0
+    for sort_order, (key, label, is_liability, is_liquid_default) in enumerate(DEFAULT_ACCOUNT_TYPES):
+        existing = db.query(AccountTypeDef).filter(AccountTypeDef.key == key).first()
+        if existing is None:
+            db.add(AccountTypeDef(
+                key=key,
+                label=label,
+                is_liability=is_liability,
+                is_liquid_default=is_liquid_default,
+                is_system=True,
+                is_hidden=False,
+                sort_order=sort_order,
+            ))
+            created += 1
+    db.commit()
+    if created > 0:
+        print(f"  Done: Created {created} new account types.")
+    else:
+        print("  Done: All default account types already present.")
+
+
 def seed_demo_data(db):
     """Create demo accounts and transactions for showcasing the app."""
     # Check if demo data already exists
@@ -251,7 +323,7 @@ def seed_demo_data(db):
     # 1. Checking Account
     checking = Account(
         name="Demo Checking",
-        account_type=AccountType.CHECKING,
+        account_type=AccountType.CHECKING.value,
         currency="USD",
         is_active=True,
         include_in_net_worth=True,
@@ -265,7 +337,7 @@ def seed_demo_data(db):
     # 2. Credit Card
     credit_card = Account(
         name="Demo Credit Card",
-        account_type=AccountType.CREDIT_CARD,
+        account_type=AccountType.CREDIT_CARD.value,
         currency="USD",
         is_active=True,
         include_in_net_worth=True,
@@ -278,7 +350,7 @@ def seed_demo_data(db):
     # 3. Real Estate
     real_estate = Account(
         name="Demo Home",
-        account_type=AccountType.REAL_ESTATE,
+        account_type=AccountType.REAL_ESTATE.value,
         currency="USD",
         is_active=True,
         include_in_net_worth=True,
@@ -291,7 +363,7 @@ def seed_demo_data(db):
     # 4. Mortgage
     mortgage = Account(
         name="Demo Mortgage",
-        account_type=AccountType.MORTGAGE,
+        account_type=AccountType.MORTGAGE.value,
         currency="USD",
         is_active=True,
         include_in_net_worth=True,
@@ -304,7 +376,7 @@ def seed_demo_data(db):
     # 5. Retirement Account
     retirement = Account(
         name="Demo 401(k)",
-        account_type=AccountType.RETIREMENT,
+        account_type=AccountType.RETIREMENT.value,
         currency="USD",
         is_active=True,
         include_in_net_worth=True,
@@ -317,7 +389,7 @@ def seed_demo_data(db):
     # 6. Investment/Brokerage Account
     investment = Account(
         name="Demo Brokerage",
-        account_type=AccountType.INVESTMENT,
+        account_type=AccountType.INVESTMENT.value,
         currency="USD",
         is_active=True,
         include_in_net_worth=True,
@@ -733,6 +805,7 @@ def init_db():
     ensure_secret_key()
     db = SessionLocal()
     try:
+        seed_account_types(db)
         seed_categories(db)
         seed_demo_data(db)
     finally:

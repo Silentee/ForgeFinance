@@ -2,13 +2,13 @@ from datetime import datetime
 from typing import Optional
 from pydantic import BaseModel, field_validator, model_validator
 
-from app.models.enums import AccountType, AccountSubtype
+from app.models.enums import AccountSubtype
 from app.schemas.institution import InstitutionRead
 
 
 class AccountBase(BaseModel):
     name: str
-    account_type: AccountType
+    account_type: str  # key of an AccountTypeDef row (e.g. "checking")
     account_subtype: Optional[AccountSubtype] = None
     institution_id: Optional[int] = None
     mask: Optional[str] = None
@@ -41,7 +41,7 @@ class AccountCreate(AccountBase):
 
 class AccountUpdate(BaseModel):
     name: Optional[str] = None
-    account_type: Optional[AccountType] = None
+    account_type: Optional[str] = None
     account_subtype: Optional[AccountSubtype] = None
     institution_id: Optional[int] = None
     mask: Optional[str] = None
@@ -65,7 +65,7 @@ class LinkedAccountInfo(BaseModel):
     """Minimal info about a linked account."""
     id: int
     name: str
-    account_type: AccountType
+    account_type: str
     current_balance: Optional[float] = None
 
     model_config = {"from_attributes": True}
@@ -95,7 +95,7 @@ class AccountSummary(BaseModel):
     """Lightweight version for list views — no nested relations."""
     id: int
     name: str
-    account_type: AccountType
+    account_type: str
     account_subtype: Optional[AccountSubtype] = None
     institution_id: Optional[int] = None
     mask: Optional[str] = None

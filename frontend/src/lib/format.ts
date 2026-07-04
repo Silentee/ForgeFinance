@@ -126,6 +126,17 @@ export function formatAccountType(type: string): string {
   return ACCOUNT_TYPE_LABELS[type] ?? type
 }
 
+// ─── Category ordering ────────────────────────────────────────────────────────
+
+/**
+ * Sort categories (or any {sort_order, name} records) by their persisted
+ * sort_order, breaking ties by name. Used everywhere categories are rendered so
+ * that reordering in the manager propagates across the app.
+ */
+export function sortBySortOrder<T extends { sort_order: number; name: string }>(items: T[]): T[] {
+  return [...items].sort((a, b) => a.sort_order - b.sort_order || a.name.localeCompare(b.name))
+}
+
 // ─── Misc ─────────────────────────────────────────────────────────────────────
 
 /** Clamp a progress value 0–100, for use with progress bars */

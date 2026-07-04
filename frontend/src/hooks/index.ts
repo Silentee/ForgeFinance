@@ -1,7 +1,9 @@
+import { useMemo } from 'react'
 import { useQuery, useInfiniteQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { accountsApi, balancesApi, transactionsApi, categoriesApi, budgetsApi, reportsApi, importsApi, institutionsApi, demoApi, authApi, type TransactionFilters } from '@/lib/services'
+import { accountsApi, accountTypesApi, balancesApi, transactionsApi, categoriesApi, budgetsApi, reportsApi, importsApi, institutionsApi, demoApi, authApi, type TransactionFilters } from '@/lib/services'
 import { getToken } from '@/lib/api'
-import type { AccountCreate, AccountUpdate, BudgetCreate, BudgetUpdate, TransactionUpdate, TransactionCreate, CategoryCreate, CSVColumnMapping, BalanceSnapshotUpdate } from '@/types'
+import type { AccountCreate, AccountUpdate, AccountTypeCreate, AccountTypeUpdate, AccountTypeDef, BudgetCreate, BudgetUpdate, TransactionUpdate, TransactionCreate, CategoryCreate, CategoryUpdate, CSVColumnMapping, BalanceSnapshotUpdate } from '@/types'
+import { formatAccountType } from '@/lib/format'
 import toast from 'react-hot-toast'
 
 // ─── Query key factory (centralised, avoids magic strings) ───────────────────
@@ -14,6 +16,7 @@ export const QK = {
   balanceHistory:(id: number) => ['accounts', id, 'balance-history'] as const,
   transactions:  (filters?: object) => ['transactions', filters] as const,
   categories:    (params?: object) => ['categories', params] as const,
+  accountTypes:  (params?: object) => ['account-types', params] as const,
   budgets:       (params?: object) => ['budgets', params] as const,
   budgetVisibleCategories: (year: number, month: number) => ['budgets', 'visible-categories', year, month] as const,
   reportBudget:  (year: number, month: number) => ['reports', 'budget', year, month] as const,
@@ -189,7 +192,7 @@ export function useDeleteTransaction() {
 
 // ─── Categories ───────────────────────────────────────────────────────────────
 
-export function useCategories(params?: { flat?: boolean; income_only?: boolean; expense_only?: boolean }) {
+export function useCategories(params?: { flat?: boolean; income_only?: boolean; expense_only?: boolean; include_hidden?: boolean }) {
   return useQuery({ queryKey: QK.categories(params), queryFn: () => categoriesApi.list(params) })
 }
 
@@ -204,6 +207,99 @@ export function useCreateCategory() {
     onError: (e: Error) => toast.error(e.message),
   })
 }
+
+export function useUpdateCategory() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, data }: { id: number; data: CategoryUpdate }) => categoriesApi.update(id, data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['categories'] })
+      qc.invalidateQueries({ queryKey: ['reports'] })
+    },
+    onError: (e: Error) => toast.error(e.message),
+  })
+}
+
+export function useDeleteCategory() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: number) => categoriesApi.delete(id),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['categories'] })
+      qc.invalidateQueries({ queryKey: ['transactions'] })
+      qc.invalidateQueries({ queryKey: ['reports'] })
+      toast.success('Category deleted')
+    },
+    onError: (e: Error) => toast.error(e.message),
+  })
+}
+
+// ─── Account Types ────────────────────────────────────────────────────────────
+
+export function useAccountTypes(params?: { include_hidden?: boolean }) {
+  return useQuery({ queryKey: QK.accountTypes(params), queryFn: () => accountTypesApi.list(params) })
+}
+
+/**
+ * Convenience view over the (non-hidden) account types for building selects,
+ * grouping and labels across the app. Falls back to the static label map while
+ * types are loading so nothing renders blank.
+ */
+export function useAccountTypeMap() {
+  const { data: types } = useAccountTypes()
+  return useMemo(() => {
+    const ordered = [...(types ?? [])].sort((a, b) => a.sort_order - b.sort_order)
+    const byKey = new Map(ordered.map(t => [t.key, t]))
+    return {
+      ordered,
+      byKey,
+      assets: ordered.filter(t => !t.is_liability),
+      liabilities: ordered.filter(t => t.is_liability),
+      label: (key: string) => byKey.get(key)?.label ?? formatAccountType(key),
+      isLiability: (key: string) => byKey.get(key)?.is_liability ?? false,
+    }
+  }, [types])
+}
+
+export function useCreateAccountType() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (data: AccountTypeCreate) => accountTypesApi.create(data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['account-types'] })
+      toast.success('Account type created')
+    },
+    onError: (e: Error) => toast.error(e.message),
+  })
+}
+
+export function useUpdateAccountType() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, data }: { id: number; data: AccountTypeUpdate }) => accountTypesApi.update(id, data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['account-types'] })
+      qc.invalidateQueries({ queryKey: ['accounts'] })
+      qc.invalidateQueries({ queryKey: ['reports'] })
+    },
+    onError: (e: Error) => toast.error(e.message),
+  })
+}
+
+export function useDeleteAccountType() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: number) => accountTypesApi.delete(id),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['account-types'] })
+      toast.success('Account type deleted')
+    },
+    onError: (e: Error) => toast.error(e.message),
+  })
+}
+
+// Re-export for convenience so components can import the type from hooks.
+export type { AccountTypeDef }
 
 // ─── Budgets ──────────────────────────────────────────────────────────────────
 

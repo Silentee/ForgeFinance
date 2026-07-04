@@ -336,7 +336,7 @@ def build_cash_flow_report(
 
     for tx in transactions:
         amount = float(tx.amount)
-        acct_type = tx.account.account_type.value if tx.account else "unknown"
+        acct_type = tx.account.account_type if tx.account else "unknown"
         cat_name = tx.category.name if tx.category else "Uncategorized"
         cat_is_income = tx.category.is_income if tx.category else False
 
@@ -355,7 +355,7 @@ def build_cash_flow_report(
 
     annualized_pairs = _get_annualized_contributions(db, year, month, account_ids)
     for tx, monthly_share in annualized_pairs:
-        acct_type = tx.account.account_type.value if tx.account else "unknown"
+        acct_type = tx.account.account_type if tx.account else "unknown"
         cat_name = tx.category.name if tx.category else "Uncategorized"
         total_expenses += monthly_share
         expenses_by_account_type[acct_type] += monthly_share
@@ -467,10 +467,10 @@ def build_net_worth_history(db: Session, months: int = 24) -> NetWorthHistory:
                 continue
             if acc.is_liability:
                 total_liabilities += bal
-                by_type[acc.account_type.value] += -bal
+                by_type[acc.account_type] += -bal
             else:
                 total_assets += bal
-                by_type[acc.account_type.value] += bal
+                by_type[acc.account_type] += bal
 
         net = total_assets - total_liabilities
         data_points.append(NetWorthDataPoint(
@@ -938,10 +938,10 @@ def build_equity_history(db: Session, months: int = 24) -> EquityHistoryReport:
         pairs.append(LinkedEquityPair(
             asset_id=asset.id,
             asset_name=asset.name,
-            asset_type=asset.account_type.value,
+            asset_type=asset.account_type,
             liability_id=liab.id,
             liability_name=liab.name,
-            liability_type=liab.account_type.value,
+            liability_type=liab.account_type,
             current_equity=round(current_equity, 2),
             equity_change_1m=change_1m,
             equity_change_1y=change_1y,
