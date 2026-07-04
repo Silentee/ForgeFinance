@@ -113,9 +113,9 @@ export function CategoryManager({ onClose }: { onClose: () => void }) {
 
   return (
     <Modal onClose={onClose} className="max-w-lg">
-      <h2 className="text-base font-semibold text-ink-100 mb-1">Manage Categories</h2>
+      <h2 className="text-base font-semibold text-ink-100 mb-1">Manage Transaction Types</h2>
       <p className="text-xs text-ink-400 mb-4">
-        Groups and their categories flow through transactions, budgets and reports. Built-in items can be hidden; your own can be deleted.
+        Groups and their types flow through transactions, budgets and reports. Built-in items can be hidden; your own can be deleted.
       </p>
 
       {isLoading ? (
@@ -154,13 +154,13 @@ export function CategoryManager({ onClose }: { onClose: () => void }) {
                     <div className="flex items-center gap-2 px-2 py-1 pl-4">
                       <input autoFocus value={newChildName} onChange={e => setNewChildName(e.target.value)}
                         onKeyDown={e => { if (e.key === 'Enter') addChild(group); if (e.key === 'Escape') { setAddingChildTo(null); setNewChildName('') } }}
-                        placeholder="New category name"
+                        placeholder="New type name"
                         className="flex-1 bg-surface-700 border border-white/[0.08] rounded px-2 py-1 text-sm text-ink-100 focus:outline-none focus:border-amber-400/40" />
                       <Button size="sm" onClick={() => addChild(group)} loading={createCat.isPending}>Add</Button>
                     </div>
                   ) : (
                     <button onClick={() => { setAddingChildTo(group.id); setNewChildName('') }}
-                      className="text-xs text-amber-400/80 hover:text-amber-400 px-2 py-1 pl-4">+ Add category</button>
+                      className="text-xs text-amber-400/80 hover:text-amber-400 px-2 py-1 pl-4">+ Add type</button>
                   )}
                 </div>
               </div>
