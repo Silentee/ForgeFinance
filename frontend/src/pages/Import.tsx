@@ -670,6 +670,9 @@ export default function ImportPage() {
 
   const deleteImport = useDeleteImport()
 
+  // Map account id → name for labeling import history rows
+  const accountNameById = new Map((accounts ?? []).map(a => [a.id, a.name]))
+
   const [importMode, setImportMode] = useState<ImportMode>('transactions')
   const [accountId, setAccountId] = useState<number | ''>('')
   const [preset, setPreset] = useState('')
@@ -1118,6 +1121,9 @@ export default function ImportPage() {
                         <div className="flex items-start justify-between gap-2">
                           <div className="min-w-0">
                             <p className="text-xs text-ink-200 truncate">{imp.file_name ?? 'Manual'}</p>
+                            <p className="text-2xs text-amber-400/80 mt-0.5 truncate">
+                              {accountNameById.get(imp.account_id) ?? `Account #${imp.account_id}`}
+                            </p>
                             <p className="text-2xs text-ink-400 mt-0.5">{formatDate(imp.imported_at)}</p>
                           </div>
                           <div className="flex items-center gap-2 flex-shrink-0">
