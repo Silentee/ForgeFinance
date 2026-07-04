@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { Outlet, useLocation } from 'react-router-dom'
+import { Link, Outlet, useLocation } from 'react-router-dom'
 import Sidebar from './Sidebar'
 
 export default function RootLayout() {
@@ -87,7 +87,7 @@ export default function RootLayout() {
               <line x1="3" y1="18" x2="21" y2="18" />
             </svg>
           </button>
-          <div className="flex items-center gap-2">
+          <Link to="/" className="flex items-center gap-2" aria-label="Go to dashboard">
             <div className="w-6 h-6 rounded-md bg-amber-400/10 border border-amber-400/20 flex items-center justify-center">
               <svg viewBox="0 0 32 32" fill="none" className="w-3.5 h-3.5">
                 <rect x="4" y="18" width="4" height="8" rx="1" fill="#f5a623"/>
@@ -97,7 +97,7 @@ export default function RootLayout() {
               </svg>
             </div>
             <span className="text-lg font-semibold text-ink-300">Forge Finance</span>
-          </div>
+          </Link>
         </div>
 
         {/* Page content with responsive padding */}
