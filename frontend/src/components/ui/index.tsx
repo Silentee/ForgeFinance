@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import clsx from 'clsx'
-import { formatCurrency, formatCurrencyWhole, formatCurrencySigned, formatPercent, clampPercent } from '@/lib/format'
+import { formatCurrency, formatCurrencyWhole, formatCurrencySigned, formatPercent } from '@/lib/format'
 
 // ─── Modal ────────────────────────────────────────────────────────────────────
 
@@ -125,53 +125,6 @@ export function StatCard({
         </span>
       )}
     </Card>
-  )
-}
-
-// ─── Budget progress bar row ──────────────────────────────────────────────────
-
-interface BudgetBarProps {
-  label: string
-  actual: number
-  budgeted: number
-  percentUsed?: number
-  invertColors?: boolean  // For income: over=good, under=bad
-}
-
-export function BudgetBar({ label, actual, budgeted, percentUsed, invertColors }: BudgetBarProps) {
-  const pct = clampPercent(percentUsed ?? (budgeted > 0 ? (actual / budgeted) * 100 : 0))
-  const isOver = pct >= 100
-
-  // For expenses: over=red, near=amber, under=green
-  // For income (inverted): over=green, near=amber, under=red
-  const getBarColor = () => {
-    if (invertColors) {
-      // Income: green when over target, red when under
-      return isOver ? 'bg-teal-400' : pct > 80 ? 'bg-amber-400' : 'bg-rose-400'
-    }
-    // Expenses: red when over, green when under
-    return isOver ? 'bg-rose-500' : pct > 80 ? 'bg-amber-400' : 'bg-teal-400'
-  }
-
-  const textColor = invertColors
-    ? (isOver ? 'text-teal-400' : 'text-ink-200')
-    : (isOver ? 'text-rose-400' : 'text-ink-200')
-
-  return (
-    <div className="space-y-1.5">
-      <div className="flex items-center justify-between text-xs">
-        <span className="text-ink-200 truncate mr-2">{label}</span>
-        <span className={clsx('font-mono flex-shrink-0', textColor)}>
-          {formatCurrencyWhole(actual)} / {formatCurrencyWhole(budgeted)}
-        </span>
-      </div>
-      <div className="h-1 bg-surface-700 rounded-full overflow-hidden">
-        <div
-          className={clsx('h-full rounded-full transition-all duration-500', getBarColor())}
-          style={{ width: `${Math.min(pct, 100)}%` }}
-        />
-      </div>
-    </div>
   )
 }
 
@@ -459,90 +412,6 @@ export function CheckboxRow({
   )
 }
 
-// ─── Simple data table ────────────────────────────────────────────────────────
-
-interface Column<T> {
-  header: string
-  accessor: (row: T) => React.ReactNode
-  align?: 'left' | 'right'
-  className?: string
-}
-
-interface TableProps<T> {
-  columns: Column<T>[]
-  data: T[]
-  keyFn: (row: T) => string | number
-  onRowClick?: (row: T) => void
-  loading?: boolean
-  emptyMessage?: string
-}
-
-export function Table<T>({ columns, data, keyFn, onRowClick, loading, emptyMessage }: TableProps<T>) {
-  return (
-    <div className="overflow-x-auto">
-      <table className="w-full text-sm">
-        <thead>
-          <tr className="border-b border-white/[0.06]">
-            {columns.map((col, i) => (
-              <th
-                key={i}
-                className={clsx(
-                  'py-2.5 px-3 label text-left first:pl-0 last:pr-0',
-                  col.align === 'right' && 'text-right'
-                )}
-              >
-                {col.header}
-              </th>
-            ))}
-          </tr>
-        </thead>
-        <tbody className="divide-y divide-white/[0.04]">
-          {loading ? (
-            Array.from({ length: 5 }).map((_, i) => (
-              <tr key={i}>
-                {columns.map((_, j) => (
-                  <td key={j} className="py-3 px-3 first:pl-0 last:pr-0">
-                    <Skeleton className="h-4 w-full" />
-                  </td>
-                ))}
-              </tr>
-            ))
-          ) : data.length === 0 ? (
-            <tr>
-              <td colSpan={columns.length} className="py-10 text-center text-ink-300 text-xs">
-                {emptyMessage ?? 'No data'}
-              </td>
-            </tr>
-          ) : (
-            data.map((row) => (
-              <tr
-                key={keyFn(row)}
-                onClick={() => onRowClick?.(row)}
-                className={clsx(
-                  'transition-colors duration-100',
-                  onRowClick && 'cursor-pointer hover:bg-white/[0.02]'
-                )}
-              >
-                {columns.map((col, i) => (
-                  <td
-                    key={i}
-                    className={clsx(
-                      'py-3 px-3 first:pl-0 last:pr-0',
-                      col.align === 'right' && 'text-right',
-                      col.className
-                    )}
-                  >
-                    {col.accessor(row)}
-                  </td>
-                ))}
-              </tr>
-            ))
-          )}
-        </tbody>
-      </table>
-    </div>
-  )
-}
 
 
 

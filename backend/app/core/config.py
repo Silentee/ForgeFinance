@@ -19,7 +19,6 @@ class Settings(BaseSettings):
 
     # CSV import settings
     max_csv_file_size_mb: int = 50
-    csv_upload_dir: str = "./uploads"
 
     # Authentication
     secret_key: str = ""  # auto-generated on first run if empty

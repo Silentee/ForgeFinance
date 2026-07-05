@@ -24,7 +24,7 @@ def create_institution(payload: InstitutionCreate, db: Session = Depends(get_db)
 
 @router.get("/{institution_id}", response_model=InstitutionRead)
 def get_institution(institution_id: int, db: Session = Depends(get_db)):
-    institution = db.query(Institution).get(institution_id)
+    institution = db.get(Institution, institution_id)
     if not institution:
         raise HTTPException(status_code=404, detail="Institution not found")
     return institution
@@ -36,7 +36,7 @@ def update_institution(
     payload: InstitutionUpdate,
     db: Session = Depends(get_db),
 ):
-    institution = db.query(Institution).get(institution_id)
+    institution = db.get(Institution, institution_id)
     if not institution:
         raise HTTPException(status_code=404, detail="Institution not found")
 
@@ -50,7 +50,7 @@ def update_institution(
 
 @router.delete("/{institution_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_institution(institution_id: int, db: Session = Depends(get_db)):
-    institution = db.query(Institution).get(institution_id)
+    institution = db.get(Institution, institution_id)
     if not institution:
         raise HTTPException(status_code=404, detail="Institution not found")
 

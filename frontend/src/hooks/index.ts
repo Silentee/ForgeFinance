@@ -13,19 +13,17 @@ export const QK = {
   accounts:      (params?: object) => ['accounts', params] as const,
   account:       (id: number) => ['accounts', id] as const,
   netWorth:      () => ['accounts', 'net-worth'] as const,
-  balanceHistory:(id: number) => ['accounts', id, 'balance-history'] as const,
+  balanceHistory:(id: number, limit?: number) => ['accounts', id, 'balance-history', limit] as const,
   transactions:  (filters?: object) => ['transactions', filters] as const,
   categories:    (params?: object) => ['categories', params] as const,
   accountTypes:  (params?: object) => ['account-types', params] as const,
   budgets:       (params?: object) => ['budgets', params] as const,
   budgetVisibleCategories: (year: number, month: number) => ['budgets', 'visible-categories', year, month] as const,
   reportBudget:  (year: number, month: number) => ['reports', 'budget', year, month] as const,
-  reportCashFlow:(year: number, month: number) => ['reports', 'cash-flow', year, month] as const,
   reportNetWorth:(months?: number) => ['reports', 'net-worth', months] as const,
   reportTrends:  (params?: object) => ['reports', 'trends', params] as const,
   reportSpendingAverages: (year: number, month: number) => ['reports', 'spending-averages', year, month] as const,
   reportMonthlyTotals: (params?: object) => ['reports', 'monthly-totals', params] as const,
-  reportSummary: () => ['reports', 'summary'] as const,
   imports:       (accountId?: number) => ['imports', accountId] as const,
 }
 
@@ -51,7 +49,7 @@ export function useNetWorth() {
 
 export function useBalanceHistory(accountId: number, limit?: number) {
   return useQuery({
-    queryKey: QK.balanceHistory(accountId),
+    queryKey: QK.balanceHistory(accountId, limit),
     queryFn: () => accountsApi.getBalanceHistory(accountId, limit),
     enabled: !!accountId,
   })
@@ -88,7 +86,8 @@ export function useUpdateBalance(accountId: number) {
       accountsApi.updateBalance(accountId, balance, date, notes),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['accounts'] })
-      qc.invalidateQueries({ queryKey: QK.balanceHistory(accountId) })
+      qc.invalidateQueries({ queryKey: ['accounts', accountId, 'balance-history'] })
+      qc.invalidateQueries({ queryKey: ['reports'] })
       toast.success('Balance updated')
     },
     onError: (e: Error) => toast.error(e.message),
@@ -102,7 +101,7 @@ export function useUpdateBalanceSnapshot(accountId: number) {
       balancesApi.update(snapshotId, data),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['accounts'] })
-      qc.invalidateQueries({ queryKey: QK.balanceHistory(accountId) })
+      qc.invalidateQueries({ queryKey: ['accounts', accountId, 'balance-history'] })
       qc.invalidateQueries({ queryKey: ['reports'] })
       toast.success('Balance entry updated')
     },
@@ -116,7 +115,7 @@ export function useDeleteBalanceSnapshot(accountId: number) {
     mutationFn: (snapshotId: number) => balancesApi.delete(snapshotId),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['accounts'] })
-      qc.invalidateQueries({ queryKey: QK.balanceHistory(accountId) })
+      qc.invalidateQueries({ queryKey: ['accounts', accountId, 'balance-history'] })
       qc.invalidateQueries({ queryKey: ['reports'] })
       toast.success('Balance entry deleted')
     },
@@ -130,6 +129,9 @@ export function useDeleteAccount() {
     mutationFn: (id: number) => accountsApi.delete(id),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['accounts'] })
+      // Deleting an account cascades its transactions and balance history.
+      qc.invalidateQueries({ queryKey: ['transactions'] })
+      qc.invalidateQueries({ queryKey: ['reports'] })
       toast.success('Account deleted')
     },
     onError: (e: Error) => toast.error(e.message),
@@ -405,14 +407,6 @@ export function useBudgetReport(year: number, month: number) {
   })
 }
 
-export function useCashFlowReport(year: number, month: number) {
-  return useQuery({
-    queryKey: QK.reportCashFlow(year, month),
-    queryFn: () => reportsApi.cashFlow(year, month),
-    enabled: !!year && !!month,
-  })
-}
-
 export function useNetWorthHistory(months = 24) {
   return useQuery({
     queryKey: QK.reportNetWorth(months),
@@ -446,20 +440,6 @@ export function useEquityHistory(months = 24) {
   return useQuery({
     queryKey: ['reports', 'equity', months],
     queryFn: () => reportsApi.equityHistory(months),
-  })
-}
-
-export function useCurrentMonthSummary() {
-  return useQuery({
-    queryKey: QK.reportSummary(),
-    queryFn: reportsApi.currentMonthSummary,
-  })
-}
-
-export function useDailySpending(year: number, month: number, compareMonths: number) {
-  return useQuery({
-    queryKey: ['reports', 'daily-spending', year, month, compareMonths],
-    queryFn: () => reportsApi.dailySpending(year, month, compareMonths),
   })
 }
 
@@ -501,9 +481,12 @@ export function useImportBalanceCsv() {
     }) => accountsApi.importBalanceCsv(accountId, file, dateColumn, balanceColumn, dateFormat, skipRows),
     onSuccess: (result, { accountId }) => {
       qc.invalidateQueries({ queryKey: ['accounts'] })
-      qc.invalidateQueries({ queryKey: QK.balanceHistory(accountId) })
+      qc.invalidateQueries({ queryKey: ['accounts', accountId, 'balance-history'] })
       qc.invalidateQueries({ queryKey: ['reports'] })
-      toast.success(`Imported ${result.imported} balance entries`)
+      toast.success(
+        `Imported ${result.imported} balance entries` +
+        (result.skipped > 0 ? ` (${result.skipped} duplicates skipped)` : '')
+      )
     },
     onError: (e: Error) => toast.error(e.message),
   })
@@ -547,9 +530,6 @@ export function useClearDemo() {
     mutationFn: () => demoApi.clear(),
     onSuccess: () => {
       qc.invalidateQueries()
-      Object.keys(localStorage)
-        .filter(k => k === 'forge-budget-visible-categories' || k.startsWith('forge-budget-visible-categories-'))
-        .forEach(k => localStorage.removeItem(k))
       toast.success('Demo data cleared')
     },
     onError: (e: Error) => toast.error(e.message),

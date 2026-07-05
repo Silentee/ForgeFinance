@@ -1,6 +1,6 @@
 from datetime import datetime
 from typing import Optional
-from sqlalchemy import String, DateTime, Numeric, Text, ForeignKey, Integer
+from sqlalchemy import String, DateTime, Numeric, Text, ForeignKey, Integer, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.session import Base
@@ -17,8 +17,16 @@ class Budget(Base):
     A budget with rollover=True carries unspent amount forward (future feature).
     """
     __tablename__ = "budgets"
+    __table_args__ = (
+        UniqueConstraint("category_id", "year", "month", name="uq_budgets_category_period"),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True, index=True)
+
+    # Owner. Nullable multi-user prep: endpoints don't scope by user yet.
+    user_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("users.id"), nullable=True, index=True
+    )
 
     category_id: Mapped[int] = mapped_column(
         ForeignKey("categories.id"), nullable=False, index=True

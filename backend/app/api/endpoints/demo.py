@@ -61,8 +61,11 @@ def clear_demo_data(db: Session = Depends(get_db)):
         synchronize_session=False
     )
 
-    # Delete all budget entries (demo creates budgets for categories)
-    db.query(Budget).delete(synchronize_session=False)
+    # Budgets aren't flagged as demo, so only wipe them when everything in the
+    # DB is demo data — never destroy budgets the user created themselves.
+    has_real_accounts = db.query(Account).filter(Account.is_demo == False).count() > 0
+    if not has_real_accounts:
+        db.query(Budget).delete(synchronize_session=False)
 
     # Delete the demo accounts themselves
     db.query(Account).filter(Account.is_demo == True).delete(

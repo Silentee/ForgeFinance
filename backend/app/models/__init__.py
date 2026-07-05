@@ -13,7 +13,7 @@ from app.models.enums import (
 )
 from app.models.account import Institution, Account
 from app.models.account_type import AccountTypeDef, DEFAULT_ACCOUNT_TYPES
-from app.models.category import Category, DEFAULT_CATEGORIES, DEFAULT_SORT_ORDER
+from app.models.category import Category, DEFAULT_CATEGORIES
 from app.models.balance import BalanceSnapshot, ImportSource
 from app.models.transaction import Transaction
 from app.models.budget import Budget
@@ -23,7 +23,7 @@ from app.models.user import User
 __all__ = [
     "AccountType", "AccountSubtype", "TransactionType", "ImportSourceType", "BalanceType",
     "Institution", "Account", "AccountTypeDef", "DEFAULT_ACCOUNT_TYPES",
-    "Category", "DEFAULT_CATEGORIES", "DEFAULT_SORT_ORDER",
+    "Category", "DEFAULT_CATEGORIES",
     "BalanceSnapshot", "ImportSource", "Transaction", "Budget",
     "BudgetVisibleCategories",
     "User",

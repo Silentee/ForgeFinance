@@ -11,8 +11,9 @@ from app.db.session import get_db
 from app.models import Account, AccountTypeDef, BalanceSnapshot, Institution
 from app.models.enums import BalanceType
 from app.schemas import (
-    AccountCreate, AccountUpdate, AccountRead, AccountSummary, NetWorthSummary
+    AccountCreate, AccountUpdate, AccountRead, AccountSummary, BalanceUpdate, NetWorthSummary
 )
+from app.services.balances import record_snapshot, recompute_account_balance
 
 router = APIRouter()
 
@@ -31,26 +32,6 @@ def _get_account_or_404(account_id: int, db: Session) -> Account:
     if not account:
         raise HTTPException(status_code=404, detail="Account not found")
     return account
-
-
-def _update_account_balance(
-    account: Account, balance: float, db: Session, snapshot_date: date | None = None
-) -> None:
-    """
-    Update current_balance on the Account and create a BalanceSnapshot row.
-    Centralizing this here ensures the two are always kept in sync.
-    """
-    snapshot_date = snapshot_date or date.today()
-    account.current_balance = balance
-    account.balance_updated_at = datetime(snapshot_date.year, snapshot_date.month, snapshot_date.day)
-
-    snapshot = BalanceSnapshot(
-        account_id=account.id,
-        snapshot_date=snapshot_date,
-        balance=balance,
-        balance_type=BalanceType.SNAPSHOT,
-    )
-    db.add(snapshot)
 
 
 # ---------------------------------------------------------------------------
@@ -121,7 +102,7 @@ def create_account(payload: AccountCreate, db: Session = Depends(get_db)):
     """
     # Validate institution exists if provided
     if payload.institution_id:
-        institution = db.query(Institution).get(payload.institution_id)
+        institution = db.get(Institution, payload.institution_id)
         if not institution:
             raise HTTPException(status_code=404, detail="Institution not found")
 
@@ -138,7 +119,7 @@ def create_account(payload: AccountCreate, db: Session = Depends(get_db)):
     db.flush()  # get account.id before creating snapshot
 
     if payload.initial_balance is not None:
-        _update_account_balance(account, payload.initial_balance, db)
+        record_snapshot(account, payload.initial_balance, db)
 
     db.commit()
     db.refresh(account)
@@ -160,7 +141,7 @@ def update_account(
     account = _get_account_or_404(account_id, db)
 
     if payload.institution_id is not None:
-        institution = db.query(Institution).get(payload.institution_id)
+        institution = db.get(Institution, payload.institution_id)
         if not institution:
             raise HTTPException(status_code=404, detail="Institution not found")
 
@@ -189,19 +170,18 @@ def delete_account(account_id: int, db: Session = Depends(get_db)):
 @router.post("/{account_id}/balance", response_model=AccountRead)
 def update_balance(
     account_id: int,
-    balance: float,
-    snapshot_date: Optional[date] = Query(None, description="Defaults to today"),
-    notes: Optional[str] = Query(None),
+    payload: BalanceUpdate,
     db: Session = Depends(get_db),
 ):
     """
-    Manually set the current balance for an account.
+    Record a balance for an account (optionally backdated).
     Used for investment accounts, real estate, and cash where you enter
     the balance directly rather than importing transactions.
-    Always creates a BalanceSnapshot for historical tracking.
+    Always creates a BalanceSnapshot; current_balance is recomputed from the
+    latest-dated snapshot, so a backdated entry never overwrites it.
     """
     account = _get_account_or_404(account_id, db)
-    _update_account_balance(account, balance, db, snapshot_date)
+    record_snapshot(account, payload.balance, db, payload.snapshot_date, payload.notes)
     db.commit()
     db.refresh(account)
     return account
@@ -252,9 +232,12 @@ def import_balance_history_csv(
     date format string (Python strptime syntax) and how many rows to skip
     before the header row.
 
-    Returns a count of rows imported and any per-row parse errors.
+    Rows whose date already has a snapshot for this account are skipped, so
+    re-uploading the same file is safe.
+
+    Returns counts of rows imported/skipped and any per-row parse errors.
     """
-    _get_account_or_404(account_id, db)
+    account = _get_account_or_404(account_id, db)
 
     raw = file.file.read().decode("utf-8-sig")
     lines = raw.replace("\r\n", "\n").replace("\r", "\n").split("\n")
@@ -273,7 +256,15 @@ def import_balance_history_csv(
                    f"Available columns: {', '.join(fieldnames)}",
         )
 
+    # Dates that already have a snapshot — re-importing the same file is a no-op.
+    existing_dates: set[date] = {
+        d for (d,) in db.query(BalanceSnapshot.snapshot_date)
+        .filter(BalanceSnapshot.account_id == account_id)
+        .all()
+    }
+
     imported = 0
+    skipped = 0
     errors: list[str] = []
 
     for i, row in enumerate(reader, start=1):
@@ -297,6 +288,11 @@ def import_balance_history_csv(
             errors.append(f"Row {i}: could not parse balance '{balance_str}'")
             continue
 
+        if snapshot_date in existing_dates:
+            skipped += 1
+            continue
+        existing_dates.add(snapshot_date)  # also dedup within the file itself
+
         db.add(BalanceSnapshot(
             account_id=account_id,
             snapshot_date=snapshot_date,
@@ -306,18 +302,8 @@ def import_balance_history_csv(
         imported += 1
 
     if imported > 0:
+        db.flush()
+        recompute_account_balance(account, db)
         db.commit()
-        # Recompute account's current_balance from most recent snapshot
-        latest = (
-            db.query(BalanceSnapshot)
-            .filter(BalanceSnapshot.account_id == account_id)
-            .order_by(BalanceSnapshot.snapshot_date.desc(), BalanceSnapshot.id.desc())
-            .first()
-        )
-        if latest:
-            account = db.query(Account).get(account_id)
-            account.current_balance = latest.balance
-            account.balance_updated_at = datetime(latest.snapshot_date.year, latest.snapshot_date.month, latest.snapshot_date.day)
-            db.commit()
 
-    return {"imported": imported, "errors": errors}
+    return {"imported": imported, "skipped": skipped, "errors": errors}

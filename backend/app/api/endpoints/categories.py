@@ -1,8 +1,10 @@
+import json
+
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
-from app.models import Category
+from app.models import Budget, BudgetVisibleCategories, Category
 from app.schemas.reports import CategoryCreate, CategoryUpdate, CategoryRead
 
 router = APIRouter()
@@ -34,11 +36,10 @@ def list_categories(
 
     all_cats = q.order_by(Category.is_income.desc(), Category.sort_order, Category.name).all()
 
-    if flat:
-        return all_cats
-
-    # Build the tree from the already-filtered list so hidden children don't
-    # leak in via the (unfiltered) ORM relationship.
+    # Build children from the already-filtered list so hidden children don't
+    # leak in via the (unfiltered) ORM relationship. This applies to BOTH
+    # modes: returning ORM objects directly would let response serialization
+    # walk the raw relationship and re-include hidden rows.
     by_parent: dict = {}
     for c in all_cats:
         by_parent.setdefault(c.parent_id, []).append(c)
@@ -48,6 +49,8 @@ def list_categories(
         node.children = [to_read(ch) for ch in by_parent.get(cat.id, [])]
         return node
 
+    if flat:
+        return [to_read(c) for c in all_cats]
     return [to_read(c) for c in all_cats if c.parent_id is None]
 
 
@@ -55,7 +58,7 @@ def list_categories(
 def create_category(payload: CategoryCreate, db: Session = Depends(get_db)):
     """Create a custom (non-system) category."""
     if payload.parent_id:
-        parent = db.query(Category).get(payload.parent_id)
+        parent = db.get(Category, payload.parent_id)
         if not parent:
             raise HTTPException(status_code=404, detail="Parent category not found")
         if parent.parent_id is not None:
@@ -73,7 +76,7 @@ def create_category(payload: CategoryCreate, db: Session = Depends(get_db)):
 
 @router.get("/{category_id}", response_model=CategoryRead)
 def get_category(category_id: int, db: Session = Depends(get_db)):
-    cat = db.query(Category).get(category_id)
+    cat = db.get(Category, category_id)
     if not cat:
         raise HTTPException(status_code=404, detail="Category not found")
     return cat
@@ -85,12 +88,19 @@ def update_category(
     payload: CategoryUpdate,
     db: Session = Depends(get_db),
 ):
-    cat = db.query(Category).get(category_id)
+    cat = db.get(Category, category_id)
     if not cat:
         raise HTTPException(status_code=404, detail="Category not found")
 
     if payload.parent_id is not None:
-        parent = db.query(Category).get(payload.parent_id)
+        if payload.parent_id == category_id:
+            raise HTTPException(status_code=400, detail="A category cannot be its own parent.")
+        if cat.children:
+            raise HTTPException(
+                status_code=400,
+                detail="Category has child categories and must stay top-level. Move its children first.",
+            )
+        parent = db.get(Category, payload.parent_id)
         if not parent:
             raise HTTPException(status_code=404, detail="Parent category not found")
         if parent.parent_id is not None:
@@ -106,7 +116,7 @@ def update_category(
 
 @router.delete("/{category_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_category(category_id: int, db: Session = Depends(get_db)):
-    cat = db.query(Category).get(category_id)
+    cat = db.get(Category, category_id)
     if not cat:
         raise HTTPException(status_code=404, detail="Category not found")
 
@@ -124,6 +134,19 @@ def delete_category(category_id: int, db: Session = Depends(get_db)):
         # Rather than blocking deletion, uncategorize the transactions
         for tx in cat.transactions:
             tx.category_id = None
+
+    # Budgets referencing this category would be orphaned — remove them, and
+    # drop the id from any saved per-month budget-visibility lists.
+    db.query(Budget).filter(Budget.category_id == category_id).delete(
+        synchronize_session=False
+    )
+    for row in db.query(BudgetVisibleCategories).all():
+        try:
+            ids = json.loads(row.category_ids_json or "[]")
+        except ValueError:
+            continue
+        if isinstance(ids, list) and category_id in ids:
+            row.category_ids_json = json.dumps([i for i in ids if i != category_id])
 
     db.delete(cat)
     db.commit()

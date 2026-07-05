@@ -56,7 +56,7 @@ def create_account_type(payload: AccountTypeCreate, db: Session = Depends(get_db
 
 @router.patch("/{type_id}", response_model=AccountTypeRead)
 def update_account_type(type_id: int, payload: AccountTypeUpdate, db: Session = Depends(get_db)):
-    type_def = db.query(AccountTypeDef).get(type_id)
+    type_def = db.get(AccountTypeDef, type_id)
     if not type_def:
         raise HTTPException(status_code=404, detail="Account type not found")
 
@@ -70,7 +70,7 @@ def update_account_type(type_id: int, payload: AccountTypeUpdate, db: Session = 
 
 @router.delete("/{type_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_account_type(type_id: int, db: Session = Depends(get_db)):
-    type_def = db.query(AccountTypeDef).get(type_id)
+    type_def = db.get(AccountTypeDef, type_id)
     if not type_def:
         raise HTTPException(status_code=404, detail="Account type not found")
 

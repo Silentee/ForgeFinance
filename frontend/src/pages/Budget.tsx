@@ -3,6 +3,7 @@ import {
   useBudgets, useCategories, useBulkCreateBudgets, useAutoSaveBudgets, useCopyBudgetMonth,
   useDemoStatus, useBudgetVisibleCategories, useSetBudgetVisibleCategories, useSpendingAverages,
 } from '@/hooks'
+import { useFloatingTableHeader } from '@/hooks/useFloatingTableHeader'
 import { Card, PageHeader, Button, Spinner, Modal } from '@/components/ui'
 import { formatCurrencyWhole, formatCurrencySignedWhole, currentYearMonth, sortBySortOrder } from '@/lib/format'
 import type { Category, BudgetCreate, SpendingAverageLine } from '@/types'
@@ -197,9 +198,6 @@ function CopyBudgetModal({
   )
 }
 
-// Horizontal scroll distance over which the frozen "Category" column collapses.
-const STICKY_COL_COLLAPSE_DISTANCE = 32
-
 // A bold total row: label + budget + the four average columns.
 function TotalRow({
   label, t, basePad, className,
@@ -250,48 +248,10 @@ export default function BudgetPage() {
   const visibility = useBudgetVisibleCategories(year, month, !isDemo && demoStatus !== undefined)
   const previousVisibility = useBudgetVisibleCategories(previousMonth.year, previousMonth.month, !isDemo && demoStatus !== undefined)
 
-  // ── Frozen category column + floating header (mirrors the Spending report) ───
-  const theadRef = useRef<HTMLTableSectionElement>(null)
-  const tableWrapperRef = useRef<HTMLDivElement>(null)
-  const floatingHeaderRef = useRef<HTMLDivElement>(null)
-  const [showFloatingHeader, setShowFloatingHeader] = useState(false)
-  const [colCollapse, setColCollapse] = useState(0)
-
-  // Show a fixed duplicate header once the real one scrolls up behind the page header.
-  useEffect(() => {
-    const thead = theadRef.current
-    if (!thead) return
-    const scrollParent = thead.closest('main')
-    if (!scrollParent) return
-    const check = () => {
-      const headerH = parseFloat(
-        getComputedStyle(document.documentElement).getPropertyValue('--page-header-height') || '0'
-      )
-      setShowFloatingHeader(thead.getBoundingClientRect().top < headerH)
-    }
-    scrollParent.addEventListener('scroll', check, { passive: true })
-    window.addEventListener('resize', check)
-    check()
-    return () => {
-      scrollParent.removeEventListener('scroll', check)
-      window.removeEventListener('resize', check)
-    }
-  }, [isLoading, averages])
-
-  // Sync the floating header's horizontal scroll + collapse the frozen column.
-  const onTableScroll = useCallback(() => {
-    if (tableWrapperRef.current && floatingHeaderRef.current) {
-      floatingHeaderRef.current.scrollLeft = tableWrapperRef.current.scrollLeft
-    }
-    const p = Math.min(1, (tableWrapperRef.current?.scrollLeft ?? 0) / STICKY_COL_COLLAPSE_DISTANCE)
-    setColCollapse(prev => (prev === p ? prev : p))
-  }, [])
-
-  useEffect(() => {
-    if (showFloatingHeader && tableWrapperRef.current && floatingHeaderRef.current) {
-      floatingHeaderRef.current.scrollLeft = tableWrapperRef.current.scrollLeft
-    }
-  }, [showFloatingHeader])
+  // ── Frozen category column + floating header (shared with the Spending report) ─
+  const {
+    theadRef, tableWrapperRef, floatingHeaderRef, showFloatingHeader, colCollapse, onTableScroll,
+  } = useFloatingTableHeader([isLoading, averages])
 
   // Frozen "Category" column geometry, interpolated by scroll-collapse progress (0..1).
   const catColWidth = Math.round(180 - 40 * colCollapse) // 180 → 140

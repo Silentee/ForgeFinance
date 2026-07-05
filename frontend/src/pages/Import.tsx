@@ -1172,7 +1172,7 @@ export default function ImportPage() {
                                 disabled={isDeleting}
                                 className="flex-1 text-2xs px-2 py-1 rounded bg-rose-500/20 hover:bg-rose-500/30 text-rose-400 transition-colors disabled:opacity-50"
                               >
-                                {isDeleting ? 'Removing�' : 'Remove'}
+                                {isDeleting ? 'Removing…' : 'Remove'}
                               </button>
                             </div>
                           </div>

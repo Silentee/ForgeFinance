@@ -285,24 +285,6 @@ export interface BudgetReport {
   expense_lines: BudgetLineItem[]
 }
 
-export interface CashFlowReport {
-  year: number
-  month: number
-  month_label: string
-  total_income: number
-  total_expenses: number
-  net_cash_flow: number
-  savings_rate?: number
-  income_by_account_type: Record<string, number>
-  expenses_by_account_type: Record<string, number>
-  top_expense_categories: { category_name: string; total: number }[]
-  largest_transactions: {
-    id: number; date: string; amount: number
-    transaction_type: TransactionType; description: string
-    account_name?: string; category_name?: string
-  }[]
-}
-
 export interface NetWorthDataPoint {
   date: string
   total_assets: number
@@ -398,12 +380,6 @@ export interface LinkedEquityPair {
 export interface EquityHistoryReport {
   pairs: LinkedEquityPair[]
   total_linked_equity: number
-}
-
-export interface DailySpendingData {
-  days: number[]
-  current_month: (number | null)[]
-  average_month: number[]
 }
 
 // ─── CSV Import ───────────────────────────────────────────────────────────────

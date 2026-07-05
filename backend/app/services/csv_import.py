@@ -352,12 +352,23 @@ def _parse_amount(value) -> Optional[float]:
         return None
 
 
-def _compute_dedup_hash(account_id: int, tx_date: date, amount: float, description: str) -> str:
+def compute_dedup_hash(
+    account_id: int,
+    tx_date: date,
+    amount: float,
+    transaction_type: TransactionType,
+    description: str,
+) -> str:
     """
     Deterministic hash for duplicate detection.
-    Two transactions are considered the same if they share all four fields.
+    Two transactions are considered the same if they share all five fields;
+    the type is included so a same-day charge + refund of equal amount don't
+    collide. Must stay in sync with the backfill in alembic revision 0003.
     """
-    key = f"{account_id}|{tx_date.isoformat()}|{amount:.2f}|{description.strip().lower()}"
+    key = (
+        f"{account_id}|{tx_date.isoformat()}|{amount:.2f}|"
+        f"{transaction_type.value}|{description.strip().lower()}"
+    )
     return hashlib.sha256(key.encode()).hexdigest()
 
 
@@ -523,7 +534,7 @@ def parse_csv(
             errors.append(f"Row {row_num}: zero amount, skipping.")
             continue
 
-        dedup_hash = _compute_dedup_hash(account_id, tx_date, amount, raw_desc)
+        dedup_hash = compute_dedup_hash(account_id, tx_date, amount, tx_type, raw_desc)
 
         transactions.append(ParsedTransaction(
             date=tx_date,

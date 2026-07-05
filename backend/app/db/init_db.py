@@ -1,24 +1,35 @@
 """
-init_db.py — Run once to create all tables and seed default data.
+init_db.py — Create/upgrade the schema and seed default data.
 
-Usage:
+Runs automatically on backend startup (see app.main lifespan); can also be
+run manually:
     python -m app.db.init_db
+
+Schema changes are managed by Alembic (backend/alembic/). This module only
+decides which Alembic action applies (see run_migrations) and seeds data.
 """
 
 import random
 from datetime import date, datetime, timedelta
 from decimal import Decimal
+from pathlib import Path
+
+from alembic import command
+from alembic.config import Config
+from sqlalchemy import inspect
 
 from app.db.session import engine, SessionLocal, Base
 from app.models import (
     Category, Account, Transaction, BalanceSnapshot, Budget,
-    DEFAULT_CATEGORIES, DEFAULT_SORT_ORDER,
+    DEFAULT_CATEGORIES,
     AccountTypeDef, DEFAULT_ACCOUNT_TYPES,
 )
 from app.models.enums import AccountType, TransactionType, BalanceType
 
 # Import all models so they're registered with Base.metadata
 import app.models  # noqa: F401
+
+_BACKEND_DIR = Path(__file__).resolve().parents[2]
 
 
 def create_tables():
@@ -27,209 +38,42 @@ def create_tables():
     print("  Tables created.")
 
 
-def _get_or_create_parent(db, name: str, *, is_income: bool = False) -> Category:
-    parent = (
-        db.query(Category)
-        .filter(Category.parent_id == None, Category.name == name, Category.is_income == is_income)
-        .first()
-    )
-    if parent:
-        return parent
-    parent = Category(name=name, is_income=is_income, is_system=True)
-    db.add(parent)
-    db.flush()
-    return parent
-
-
-def _get_child(db, parent_id: int, name: str):
-    return (
-        db.query(Category)
-        .filter(Category.parent_id == parent_id, Category.name == name)
-        .first()
-    )
-
-
-def _get_or_create_child(db, parent_id: int, name: str, *, is_income: bool = False) -> Category:
-    child = _get_child(db, parent_id, name)
-    if child:
-        return child
-    child = Category(name=name, is_income=is_income, is_system=True, parent_id=parent_id)
-    db.add(child)
-    db.flush()
-    return child
-
-
-def migrate_category_taxonomy(db):
-    """Align existing category trees with current system defaults."""
-    changed = False
-
-    essential = _get_or_create_parent(db, "Essential")
-    lifestyle = _get_or_create_parent(db, "Lifestyle")
-    _get_or_create_parent(db, "Financial")
-    other = _get_or_create_parent(db, "Other")
-
-    if _get_child(db, lifestyle.id, "Home Improvement") is None:
-        _get_or_create_child(db, lifestyle.id, "Home Improvement")
-        changed = True
-
-    if _get_child(db, essential.id, "HOA") is None:
-        _get_or_create_child(db, essential.id, "HOA")
-        changed = True
-
-    legacy_insurance = _get_child(db, essential.id, "Insurance")
-    other_insurance = _get_child(db, essential.id, "Other Insurance")
-
-    if legacy_insurance and other_insurance is None:
-        legacy_insurance.name = "Other Insurance"
-        legacy_insurance.is_system = True
-        other_insurance = legacy_insurance
-        changed = True
-    elif legacy_insurance and other_insurance:
-        db.query(Transaction).filter(Transaction.category_id == legacy_insurance.id).update(
-            {Transaction.category_id: other_insurance.id}, synchronize_session=False
-        )
-        db.query(Budget).filter(Budget.category_id == legacy_insurance.id).update(
-            {Budget.category_id: other_insurance.id}, synchronize_session=False
-        )
-        db.delete(legacy_insurance)
-        changed = True
-
-    for insurance_name in ["Home Insurance", "Car Insurance", "Other Insurance"]:
-        if _get_child(db, essential.id, insurance_name) is None:
-            _get_or_create_child(db, essential.id, insurance_name)
-            changed = True
-    other_insurance = _get_child(db, essential.id, "Other Insurance")
-    life_insurance = _get_child(db, essential.id, "Life Insurance")
-    if life_insurance:
-        if other_insurance:
-            db.query(Transaction).filter(Transaction.category_id == life_insurance.id).update(
-                {Transaction.category_id: other_insurance.id}, synchronize_session=False
-            )
-            db.query(Budget).filter(Budget.category_id == life_insurance.id).update(
-                {Budget.category_id: other_insurance.id}, synchronize_session=False
-            )
-        db.delete(life_insurance)
-        changed = True
-
-    utilities = _get_or_create_parent(db, "Utilities")
-    legacy_electricity = _get_child(db, utilities.id, "Electricity")
-    electric = _get_child(db, utilities.id, "Electric")
-    if legacy_electricity and electric is None:
-        legacy_electricity.name = "Electric"
-        legacy_electricity.is_system = True
-        changed = True
-    elif legacy_electricity and electric:
-        db.query(Transaction).filter(Transaction.category_id == legacy_electricity.id).update(
-            {Transaction.category_id: electric.id}, synchronize_session=False
-        )
-        db.query(Budget).filter(Budget.category_id == legacy_electricity.id).update(
-            {Budget.category_id: electric.id}, synchronize_session=False
-        )
-        db.delete(legacy_electricity)
-        changed = True
-    elif electric is None:
-        _get_or_create_child(db, utilities.id, "Electric")
-        changed = True
-
-    other_expense_candidates = (
-        db.query(Category)
-        .filter(Category.name == "Other Expense", Category.is_income == False)
-        .all()
-    )
-    canonical_other_expense = next((c for c in other_expense_candidates if c.parent_id == other.id), None)
-
-    if canonical_other_expense is None and other_expense_candidates:
-        canonical_other_expense = other_expense_candidates[0]
-        if canonical_other_expense.parent_id != other.id:
-            canonical_other_expense.parent_id = other.id
-            canonical_other_expense.is_system = True
-            changed = True
-
-    if canonical_other_expense is None:
-        canonical_other_expense = _get_or_create_child(db, other.id, "Other Expense")
-        changed = True
-
-    for candidate in other_expense_candidates:
-        if candidate.id == canonical_other_expense.id:
-            continue
-        db.query(Transaction).filter(Transaction.category_id == candidate.id).update(
-            {Transaction.category_id: canonical_other_expense.id}, synchronize_session=False
-        )
-        db.query(Budget).filter(Budget.category_id == candidate.id).update(
-            {Budget.category_id: canonical_other_expense.id}, synchronize_session=False
-        )
-        db.delete(candidate)
-        changed = True
-
-    if changed:
-        db.commit()
-        print("  Category taxonomy migration applied.")
+def _alembic_config() -> Config:
+    cfg = Config(str(_BACKEND_DIR / "alembic.ini"))
+    cfg.set_main_option("script_location", str(_BACKEND_DIR / "alembic"))
+    return cfg
 
 
 def run_migrations():
-    """Apply incremental schema changes to existing databases."""
-    from sqlalchemy import text
+    """Create or upgrade the schema via Alembic.
 
-    migrations = [
-        "ALTER TABLE transactions ADD COLUMN is_annualized BOOLEAN NOT NULL DEFAULT 0",
-        "ALTER TABLE categories ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0",
-        "ALTER TABLE categories ADD COLUMN is_hidden BOOLEAN NOT NULL DEFAULT 0",
-    ]
-    with engine.connect() as conn:
-        for sql in migrations:
-            try:
-                conn.execute(text(sql))
-                conn.commit()
-            except Exception:
-                pass  # Column already exists
+    - Fresh database: create_all() builds the full current schema, then the
+      DB is stamped at head (no revisions need to run).
+    - Pre-Alembic database: stamp the baseline revision, then upgrade so the
+      later revisions (ported hand-rolled migrations + new changes) apply.
+    - Alembic-managed database: plain upgrade to head.
 
-    db = SessionLocal()
-    try:
-        migrate_account_type_values(db)
-        migrate_category_taxonomy(db)
-        backfill_category_sort_order(db)
-    finally:
-        db.close()
-
-
-def migrate_account_type_values(db):
+    create_all() runs in every case — it only creates tables that don't
+    exist yet, which keeps the old behavior of picking up brand-new tables
+    on databases that predate their introduction.
     """
-    The old account_type column was a SAEnum, which persisted the enum *name*
-    (e.g. "CHECKING"), not its value (e.g. "checking"). Now that account types
-    are DB-backed and keyed by the lowercase value, convert any legacy rows so
-    they match AccountTypeDef.key. Idempotent — converted rows no longer match.
-    """
-    changed = 0
-    for member in AccountType:
-        if member.name == member.value:
-            continue
-        updated = (
-            db.query(Account)
-            .filter(Account.account_type == member.name)
-            .update({Account.account_type: member.value}, synchronize_session=False)
-        )
-        changed += updated
-    if changed:
-        db.commit()
-        print(f"  Converted {changed} account(s) to keyed account types.")
+    inspector = inspect(engine)
+    existing_tables = set(inspector.get_table_names())
+    is_fresh = "accounts" not in existing_tables
+    has_version_table = "alembic_version" in existing_tables
 
+    create_tables()
 
-def backfill_category_sort_order(db):
-    """
-    Give existing categories (created before the sort_order column existed) the
-    default ordering by matching on name. Only touches rows still at the default
-    0 so user-customized ordering is never overwritten.
-    """
-    rows = db.query(Category).filter(Category.sort_order == 0).all()
-    changed = False
-    for cat in rows:
-        default = DEFAULT_SORT_ORDER.get(cat.name)
-        if default is not None and default != 0:
-            cat.sort_order = default
-            changed = True
-    if changed:
-        db.commit()
-        print("  Category sort_order backfilled.")
+    cfg = _alembic_config()
+    if is_fresh:
+        command.stamp(cfg, "head")
+        print("  Fresh database stamped at Alembic head.")
+    else:
+        if not has_version_table:
+            command.stamp(cfg, "0001")
+            print("  Pre-Alembic database stamped at baseline.")
+        command.upgrade(cfg, "head")
+        print("  Alembic migrations up to date.")
 
 
 def seed_categories(db):
@@ -800,8 +644,7 @@ def ensure_secret_key():
 
 
 def init_db():
-    create_tables()
-    run_migrations()
+    run_migrations()  # includes create_tables() for missing tables
     ensure_secret_key()
     db = SessionLocal()
     try:

@@ -1,6 +1,6 @@
 from app.schemas.institution import InstitutionCreate, InstitutionUpdate, InstitutionRead
 from app.schemas.account import (
-    AccountCreate, AccountUpdate, AccountRead, AccountSummary, NetWorthSummary
+    AccountCreate, AccountUpdate, AccountRead, AccountSummary, BalanceUpdate, NetWorthSummary
 )
 from app.schemas.account_type import (
     AccountTypeCreate, AccountTypeUpdate, AccountTypeRead
@@ -16,7 +16,6 @@ from app.schemas.reports import (
     BudgetCreate, BudgetUpdate, BudgetRead,
     CategoryCreate, CategoryUpdate, CategoryRead,
     BudgetReport, BudgetLineItem,
-    CashFlowReport,
     NetWorthHistory, NetWorthDataPoint,
     SpendingTrendsReport, CategoryTrendSeries,
 )

@@ -16,7 +16,6 @@ from app.models.enums import TransactionType
 from app.schemas.reports import (
     BudgetLineItem,
     BudgetReport,
-    CashFlowReport,
     CategoryTrendSeries,
     EquityDataPoint,
     EquityHistoryReport,
@@ -110,6 +109,66 @@ def _latest_balance_on_or_before(snapshots: list[BalanceSnapshot], cutoff: date)
     return None
 
 
+def _load_categories(db: Session, cat_ids: set) -> dict[int, Category]:
+    ids = {c for c in cat_ids if c is not None}
+    if not ids:
+        return {}
+    return {c.id: c for c in db.query(Category).filter(Category.id.in_(ids)).all()}
+
+
+def _aggregate_monthly(
+    db: Session,
+    periods: list[tuple[int, int]],
+    account_ids: Optional[list[int]] = None,
+) -> dict[Optional[int], dict[str, dict]]:
+    """Per-category, per-month raw debit/credit totals across the given
+    months. Annualized purchases are spread forward: each contributes
+    amount/12 to the 12 consecutive months starting at its purchase month,
+    so purchases from up to 11 months before the window still count.
+
+    Returns agg[category_id][month_key] = {"debits": float, "credits": float}.
+    Sign conventions (expense = debits - credits, income = credits - debits)
+    are applied by the callers.
+    """
+    month_keys = [_month_key(y, m) for y, m in periods]
+    date_from = _first_day_of_month(*periods[0])
+    date_to = _last_day_of_month(*periods[-1])
+
+    agg: dict[Optional[int], dict[str, dict]] = defaultdict(
+        lambda: {mk: {"debits": 0.0, "credits": 0.0} for mk in month_keys}
+    )
+
+    for tx in _get_budget_transactions(db, date_from, date_to, account_ids):
+        mk = _month_key(tx.date.year, tx.date.month)
+        if mk not in agg[tx.category_id]:
+            continue
+        amount = float(tx.amount)
+        if tx.transaction_type == TransactionType.DEBIT:
+            agg[tx.category_id][mk]["debits"] += amount
+        else:
+            agg[tx.category_id][mk]["credits"] += amount
+
+    window_start = _first_day_of_month(*_add_months(*periods[0], -11))
+    annualized_q = db.query(Transaction).filter(
+        Transaction.is_annualized == True,
+        Transaction.transaction_type == TransactionType.DEBIT,
+        Transaction.is_transfer == False,
+        Transaction.exclude_from_budget == False,
+        Transaction.date >= window_start,
+        Transaction.date <= date_to,
+    )
+    if account_ids:
+        annualized_q = annualized_q.filter(Transaction.account_id.in_(account_ids))
+    for tx in annualized_q.all():
+        tx_offset = tx.date.year * 12 + tx.date.month
+        monthly_share = float(tx.amount) / 12.0
+        for (py, pm), mk in zip(periods, month_keys):
+            if tx_offset <= py * 12 + pm <= tx_offset + 11:
+                agg[tx.category_id][mk]["debits"] += monthly_share
+
+    return agg
+
+
 # ---------------------------------------------------------------------------
 # Budget report
 # ---------------------------------------------------------------------------
@@ -146,17 +205,8 @@ def build_budget_report(
     for tx, monthly_share in _get_annualized_contributions(db, year, month, account_ids):
         actuals[tx.category_id]["debits"] += monthly_share
 
-    cat_ids_needed = set(budget_by_cat.keys()) | {k for k in actuals if k is not None}
-    categories: dict[int, Category] = {}
-    if cat_ids_needed:
-        for cat in db.query(Category).filter(Category.id.in_(cat_ids_needed)).all():
-            categories[cat.id] = cat
-
-    parent_ids = {c.parent_id for c in categories.values() if c.parent_id}
-    parents: dict[int, Category] = {}
-    if parent_ids:
-        for cat in db.query(Category).filter(Category.id.in_(parent_ids)).all():
-            parents[cat.id] = cat
+    categories = _load_categories(db, set(budget_by_cat.keys()) | set(actuals.keys()))
+    parents = _load_categories(db, {c.parent_id for c in categories.values() if c.parent_id})
 
     all_cat_ids: set[Optional[int]] = set(budget_by_cat.keys()) | set(actuals.keys())
     income_lines: list[BudgetLineItem] = []
@@ -241,60 +291,19 @@ def build_monthly_totals(
     month_keys = [_month_key(y, m) for y, m in periods]
     month_labels = [_short_month_label(y, m) for y, m in periods]
 
-    # Fetch all non-annualized transactions for the full range
-    overall_date_from = _first_day_of_month(*periods[0])
-    overall_date_to = _last_day_of_month(*periods[-1])
-    transactions = _get_budget_transactions(db, overall_date_from, overall_date_to, account_ids)
-
-    # Pre-load categories
-    cat_ids = {tx.category_id for tx in transactions if tx.category_id}
-    category_map: dict[int, Category] = {}
-    if cat_ids:
-        for cat in db.query(Category).filter(Category.id.in_(cat_ids)).all():
-            category_map[cat.id] = cat
-
-    # Accumulate per-month, per-category debits/credits
-    agg: dict[str, dict[Optional[int], dict]] = {
-        mk: defaultdict(lambda: {"debits": 0.0, "credits": 0.0}) for mk in month_keys
-    }
-    for tx in transactions:
-        mk = _month_key(tx.date.year, tx.date.month)
-        if mk not in agg:
-            continue
-        amount = float(tx.amount)
-        if tx.transaction_type == TransactionType.DEBIT:
-            agg[mk][tx.category_id]["debits"] += amount
-        else:
-            agg[mk][tx.category_id]["credits"] += amount
-
-    # Pre-fetch annualized contributions for all periods and collect their categories
-    annualized_by_month: dict[str, list[tuple[Transaction, float]]] = {}
-    for (y, m), mk in zip(periods, month_keys):
-        pairs = _get_annualized_contributions(db, y, m, account_ids)
-        annualized_by_month[mk] = pairs
-        for tx, _ in pairs:
-            if tx.category_id and tx.category_id not in category_map:
-                cat_ids.add(tx.category_id)
-    # Load any missing categories from annualized transactions
-    missing_cat_ids = cat_ids - set(category_map.keys())
-    if missing_cat_ids:
-        for cat in db.query(Category).filter(Category.id.in_(missing_cat_ids)).all():
-            category_map[cat.id] = cat
+    agg = _aggregate_monthly(db, periods, account_ids)
+    category_map = _load_categories(db, set(agg.keys()))
 
     income_totals: list[float] = []
     expense_totals: list[float] = []
 
-    for (y, m), mk in zip(periods, month_keys):
-        # Add annualized contributions for this specific month
-        for tx, monthly_share in annualized_by_month[mk]:
-            agg[mk][tx.category_id]["debits"] += monthly_share
-
+    for mk in month_keys:
         total_income = 0.0
         total_expenses = 0.0
-        for cat_id, vals in agg[mk].items():
+        for cat_id, month_data in agg.items():
+            vals = month_data[mk]
             cat = category_map.get(cat_id) if cat_id is not None else None
-            is_income = cat.is_income if cat else False
-            if is_income:
+            if cat and cat.is_income:
                 total_income += vals["credits"] - vals["debits"]
             else:
                 total_expenses += vals["debits"] - vals["credits"]
@@ -310,100 +319,6 @@ def build_monthly_totals(
         monthly_income_totals=income_totals,
         monthly_expense_totals=expense_totals,
         monthly_net_totals=net_totals,
-    )
-
-
-# ---------------------------------------------------------------------------
-# Cash flow report
-# ---------------------------------------------------------------------------
-
-def build_cash_flow_report(
-    db: Session,
-    year: int,
-    month: int,
-    account_ids: Optional[list[int]] = None,
-) -> CashFlowReport:
-    date_from = _first_day_of_month(year, month)
-    date_to = _last_day_of_month(year, month)
-
-    transactions = _get_budget_transactions(db, date_from, date_to, account_ids)
-
-    total_income = 0.0
-    total_expenses = 0.0
-    income_by_account_type: dict[str, float] = defaultdict(float)
-    expenses_by_account_type: dict[str, float] = defaultdict(float)
-    category_expenses: dict[str, float] = defaultdict(float)
-
-    for tx in transactions:
-        amount = float(tx.amount)
-        acct_type = tx.account.account_type if tx.account else "unknown"
-        cat_name = tx.category.name if tx.category else "Uncategorized"
-        cat_is_income = tx.category.is_income if tx.category else False
-
-        if tx.transaction_type == TransactionType.DEBIT:
-            total_expenses += amount
-            expenses_by_account_type[acct_type] += amount
-            category_expenses[cat_name] += amount
-        else:
-            if cat_is_income:
-                total_income += amount
-                income_by_account_type[acct_type] += amount
-            else:
-                total_expenses -= amount
-                expenses_by_account_type[acct_type] -= amount
-                category_expenses[cat_name] -= amount
-
-    annualized_pairs = _get_annualized_contributions(db, year, month, account_ids)
-    for tx, monthly_share in annualized_pairs:
-        acct_type = tx.account.account_type if tx.account else "unknown"
-        cat_name = tx.category.name if tx.category else "Uncategorized"
-        total_expenses += monthly_share
-        expenses_by_account_type[acct_type] += monthly_share
-        category_expenses[cat_name] += monthly_share
-
-    top_expense_categories = [
-        {"category_name": k, "total": round(v, 2)}
-        for k, v in sorted(category_expenses.items(), key=lambda x: x[1], reverse=True)
-        if v > 0
-    ][:5]
-
-    largest_q = (
-        db.query(Transaction)
-        .filter(
-            Transaction.date >= date_from,
-            Transaction.date <= date_to,
-            Transaction.is_transfer == False,
-        )
-    )
-    if account_ids:
-        largest_q = largest_q.filter(Transaction.account_id.in_(account_ids))
-
-    largest_transactions = []
-    for tx in largest_q.order_by(Transaction.amount.desc()).limit(10).all():
-        largest_transactions.append({
-            "id": tx.id,
-            "date": tx.date.isoformat(),
-            "description": tx.description or tx.original_description,
-            "amount": float(tx.amount),
-            "transaction_type": tx.transaction_type.value,
-            "account_name": tx.account.name if tx.account else None,
-        })
-
-    net_cash_flow = total_income - total_expenses
-    savings_rate = (net_cash_flow / total_income * 100.0) if total_income > 0 else None
-
-    return CashFlowReport(
-        year=year,
-        month=month,
-        month_label=_month_label(year, month),
-        total_income=round(total_income, 2),
-        total_expenses=round(total_expenses, 2),
-        net_cash_flow=round(net_cash_flow, 2),
-        savings_rate=round(savings_rate, 2) if savings_rate is not None else None,
-        income_by_account_type={k: round(v, 2) for k, v in income_by_account_type.items()},
-        expenses_by_account_type={k: round(v, 2) for k, v in expenses_by_account_type.items()},
-        top_expense_categories=top_expense_categories,
-        largest_transactions=largest_transactions,
     )
 
 
@@ -537,78 +452,8 @@ def build_spending_trends(
     month_keys = [_month_key(y, m) for y, m in periods]
     month_labels = [_short_month_label(y, m) for y, m in periods]
 
-    overall_date_from = _first_day_of_month(*periods[0])
-    overall_date_to = _last_day_of_month(*periods[-1])
-
-    transactions = _get_budget_transactions(db, overall_date_from, overall_date_to, account_ids)
-
-    # Pre-fetch annualized transactions that could contribute to ANY period
-    # month.  Each transaction spreads forward 12 months from its date, so for
-    # the earliest period we need transactions from up to 11 months before it.
-    first_year, first_month = periods[0]
-    annualized_window_start = _first_day_of_month(*_add_months(first_year, first_month, -11))
-    annualized_window_end = _last_day_of_month(anchor_year, anchor_month)
-    annualized_txns_raw = db.query(Transaction).filter(
-        Transaction.is_annualized == True,
-        Transaction.transaction_type == TransactionType.DEBIT,
-        Transaction.is_transfer == False,
-        Transaction.exclude_from_budget == False,
-        Transaction.date >= annualized_window_start,
-        Transaction.date <= annualized_window_end,
-    )
-    if account_ids:
-        annualized_txns_raw = annualized_txns_raw.filter(Transaction.account_id.in_(account_ids))
-    annualized_txns = annualized_txns_raw.all()
-
-    cat_ids = {tx.category_id for tx in transactions if tx.category_id}
-    cat_ids.update({tx.category_id for tx in annualized_txns if tx.category_id})
-    category_map: dict[int, Category] = {}
-    if cat_ids:
-        for cat in db.query(Category).filter(Category.id.in_(cat_ids)).all():
-            category_map[cat.id] = cat
-
-    agg: dict[Optional[int], dict[str, dict]] = defaultdict(
-        lambda: {mk: {"debits": 0.0, "credits": 0.0} for mk in month_keys}
-    )
-
-    monthly_income: dict[str, float] = {mk: 0.0 for mk in month_keys}
-    monthly_expenses: dict[str, float] = {mk: 0.0 for mk in month_keys}
-
-    for tx in transactions:
-        mk = _month_key(tx.date.year, tx.date.month)
-        if mk not in agg[tx.category_id]:
-            continue
-
-        amount = float(tx.amount)
-        cat_is_income = tx.category.is_income if tx.category else False
-
-        # Inclusion rule:
-        # - debits always increase expenses
-        # - credits on income categories increase income
-        # - all other credits (refunds, uncategorized) reduce expenses
-        if tx.transaction_type == TransactionType.DEBIT:
-            agg[tx.category_id][mk]["debits"] += amount
-            monthly_expenses[mk] += amount
-        else:
-            if cat_is_income:
-                agg[tx.category_id][mk]["credits"] += amount
-                monthly_income[mk] += amount
-            else:
-                agg[tx.category_id][mk]["debits"] -= amount
-                monthly_expenses[mk] -= amount
-
-    # Annualized expenses: each transaction is spread forward from its date
-    # for 12 consecutive months.  A period month receives the monthly share
-    # (amount / 12) only if it falls within that forward span.
-    for tx in annualized_txns:
-        tx_offset = tx.date.year * 12 + tx.date.month
-        monthly_share = float(tx.amount) / 12.0
-        for period_year, period_month in periods:
-            period_offset = period_year * 12 + period_month
-            if tx_offset <= period_offset <= tx_offset + 11:
-                mk = _month_key(period_year, period_month)
-                agg[tx.category_id][mk]["debits"] += monthly_share
-                monthly_expenses[mk] += monthly_share
+    agg = _aggregate_monthly(db, periods, account_ids)
+    category_map = _load_categories(db, set(agg.keys()))
 
     def cat_is_income_fn(cat_id: Optional[int]) -> bool:
         if cat_id is None:
@@ -622,10 +467,28 @@ def build_spending_trends(
         cat = category_map.get(cat_id)
         return cat.name if cat else f"Category {cat_id}"
 
+    # Month-level totals. Inclusion rule:
+    # - debits always increase expenses (even on income categories)
+    # - credits on income categories increase income
+    # - all other credits (refunds, uncategorized) reduce expenses
+    monthly_income: dict[str, float] = {mk: 0.0 for mk in month_keys}
+    monthly_expenses: dict[str, float] = {mk: 0.0 for mk in month_keys}
+    for cat_id, month_data in agg.items():
+        is_income = cat_is_income_fn(cat_id)
+        for mk in month_keys:
+            vals = month_data[mk]
+            if is_income:
+                monthly_income[mk] += vals["credits"]
+                monthly_expenses[mk] += vals["debits"]
+            else:
+                monthly_expenses[mk] += vals["debits"] - vals["credits"]
+
     cat_expense_totals: dict[Optional[int], float] = {}
     for cat_id, month_data in agg.items():
         if not cat_is_income_fn(cat_id):
-            cat_expense_totals[cat_id] = sum(d["debits"] for d in month_data.values())
+            cat_expense_totals[cat_id] = sum(
+                d["debits"] - d["credits"] for d in month_data.values()
+            )
 
     sorted_expense_cats = sorted(cat_expense_totals.items(), key=lambda x: x[1], reverse=True)
     top_cats = {cat_id for cat_id, _ in sorted_expense_cats[:top_n_categories]}
@@ -649,9 +512,12 @@ def build_spending_trends(
             total=round(total, 2),
         ))
 
-    for cat_id in [cid for cid in top_cats]:
+    for cat_id in top_cats:
         month_data = agg[cat_id]
-        monthly_totals = [round(month_data[mk]["debits"], 2) for mk in month_keys]
+        monthly_totals = [
+            round(month_data[mk]["debits"] - month_data[mk]["credits"], 2)
+            for mk in month_keys
+        ]
         total = sum(monthly_totals)
         if total == 0:
             continue
@@ -668,7 +534,9 @@ def build_spending_trends(
         other_totals_by_month: dict[str, float] = {mk: 0.0 for mk in month_keys}
         for cat_id in other_cat_ids:
             for mk in month_keys:
-                other_totals_by_month[mk] += agg[cat_id][mk]["debits"]
+                other_totals_by_month[mk] += (
+                    agg[cat_id][mk]["debits"] - agg[cat_id][mk]["credits"]
+                )
         other_monthly = [round(other_totals_by_month[mk], 2) for mk in month_keys]
         other_total = sum(other_monthly)
         if other_total > 0:
@@ -726,60 +594,11 @@ def build_spending_averages(
         periods.append((y, m))
     month_keys = [_month_key(y, m) for y, m in periods]
 
-    overall_date_from = _first_day_of_month(*periods[0])
-    overall_date_to = _last_day_of_month(*periods[-1])
-    transactions = _get_budget_transactions(db, overall_date_from, overall_date_to, account_ids)
-
-    # Annualized transactions can contribute to any period month; each spreads
-    # its amount forward 12 months from its date, so look back up to 11 months
-    # before the earliest period.
-    annualized_window_start = _first_day_of_month(*_add_months(*periods[0], -11))
-    annualized_window_end = _last_day_of_month(anchor_year, anchor_month)
-    annualized_q = db.query(Transaction).filter(
-        Transaction.is_annualized == True,
-        Transaction.transaction_type == TransactionType.DEBIT,
-        Transaction.is_transfer == False,
-        Transaction.exclude_from_budget == False,
-        Transaction.date >= annualized_window_start,
-        Transaction.date <= annualized_window_end,
-    )
-    if account_ids:
-        annualized_q = annualized_q.filter(Transaction.account_id.in_(account_ids))
-    annualized_txns = annualized_q.all()
-
-    # Accumulate per-category, per-month debits/credits.
-    agg: dict[Optional[int], dict[str, dict]] = defaultdict(
-        lambda: {mk: {"debits": 0.0, "credits": 0.0} for mk in month_keys}
-    )
-    for tx in transactions:
-        mk = _month_key(tx.date.year, tx.date.month)
-        if mk not in agg[tx.category_id]:
-            continue
-        amount = float(tx.amount)
-        if tx.transaction_type == TransactionType.DEBIT:
-            agg[tx.category_id][mk]["debits"] += amount
-        else:
-            agg[tx.category_id][mk]["credits"] += amount
-
-    for tx in annualized_txns:
-        tx_offset = tx.date.year * 12 + tx.date.month
-        monthly_share = float(tx.amount) / 12.0
-        for (py, pm), mk in zip(periods, month_keys):
-            period_offset = py * 12 + pm
-            if tx_offset <= period_offset <= tx_offset + 11:
-                agg[tx.category_id][mk]["debits"] += monthly_share
+    agg = _aggregate_monthly(db, periods, account_ids)
 
     # Preload categories (+ their parents) for names / income flag / hierarchy.
-    cat_ids = {cid for cid in agg if cid is not None}
-    categories: dict[int, Category] = {}
-    if cat_ids:
-        for cat in db.query(Category).filter(Category.id.in_(cat_ids)).all():
-            categories[cat.id] = cat
-    parent_ids = {c.parent_id for c in categories.values() if c.parent_id}
-    parents: dict[int, Category] = {}
-    if parent_ids:
-        for cat in db.query(Category).filter(Category.id.in_(parent_ids)).all():
-            parents[cat.id] = cat
+    categories = _load_categories(db, set(agg.keys()))
+    parents = _load_categories(db, {c.parent_id for c in categories.values() if c.parent_id})
 
     def _avg(values: list[float], n: int) -> float:
         window = values[-n:]

@@ -2,13 +2,14 @@ from datetime import date
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy.orm import Session
-from sqlalchemy import and_, or_
+from sqlalchemy.orm import Session, joinedload
+from sqlalchemy import or_
 
 from app.db.session import get_db
 from app.models import Account, Transaction, Category
 from app.models.enums import TransactionType
 from app.schemas import TransactionCreate, TransactionUpdate, TransactionRead
+from app.services.csv_import import compute_dedup_hash
 
 router = APIRouter()
 
@@ -20,11 +21,34 @@ def _get_transaction_or_404(tx_id: int, db: Session) -> Transaction:
     return tx
 
 
+_TAG_COLUMNS = {
+    "is_transfer": Transaction.is_transfer,
+    "exclude_from_budget": Transaction.exclude_from_budget,
+    "is_annualized": Transaction.is_annualized,
+    "is_pending": Transaction.is_pending,
+}
+
+
+def _parse_id_list(value: Optional[str], param: str) -> Optional[list[int]]:
+    if not value:
+        return None
+    try:
+        return [int(x.strip()) for x in value.split(",") if x.strip()]
+    except ValueError:
+        raise HTTPException(
+            status_code=422,
+            detail=f"{param} must be a comma-separated list of integers, e.g. '1,2,3'",
+        )
+
+
 @router.get("", response_model=list[TransactionRead])
 def list_transactions(
     account_id: Optional[int] = Query(None),
+    account_ids: Optional[str] = Query(None, description="Comma-separated account IDs (takes precedence over account_id)"),
     category_id: Optional[int] = Query(None),
-    uncategorized: Optional[bool] = Query(None, description="If true, return only transactions with no category"),
+    category_ids: Optional[str] = Query(None, description="Comma-separated category IDs (takes precedence over category_id)"),
+    uncategorized: Optional[bool] = Query(None, description="If true, include transactions with no category (combines with category_ids)"),
+    tags: Optional[str] = Query(None, description="Comma-separated tag filters, matched with OR: is_transfer, exclude_from_budget, is_annualized, is_pending"),
     date_from: Optional[date] = Query(None),
     date_to: Optional[date] = Query(None),
     transaction_type: Optional[TransactionType] = Query(None),
@@ -43,14 +67,44 @@ def list_transactions(
     List transactions with rich filtering. All parameters are optional and combinable.
     Ordered by date descending (newest first) by default.
     """
-    q = db.query(Transaction)
+    # Eager-load account/category — the response includes their names, and
+    # lazy loading them per row is an N+1 (2 extra queries per transaction).
+    q = db.query(Transaction).options(
+        joinedload(Transaction.account), joinedload(Transaction.category)
+    )
 
-    if account_id is not None:
+    account_id_list = _parse_id_list(account_ids, "account_ids")
+    if account_id_list:
+        q = q.filter(Transaction.account_id.in_(account_id_list))
+    elif account_id is not None:
         q = q.filter(Transaction.account_id == account_id)
-    if uncategorized:
-        q = q.filter(Transaction.category_id.is_(None))
+
+    category_id_list = _parse_id_list(category_ids, "category_ids")
+    if category_id_list or uncategorized:
+        conds = []
+        if category_id_list:
+            conds.append(Transaction.category_id.in_(category_id_list))
+        if uncategorized:
+            conds.append(Transaction.category_id.is_(None))
+        q = q.filter(or_(*conds))
     elif category_id is not None:
         q = q.filter(Transaction.category_id == category_id)
+
+    if tags:
+        tag_conds = []
+        for tag in (t.strip() for t in tags.split(",")):
+            if not tag:
+                continue
+            col = _TAG_COLUMNS.get(tag)
+            if col is None:
+                raise HTTPException(
+                    status_code=422,
+                    detail=f"Unknown tag {tag!r}. Valid tags: {', '.join(_TAG_COLUMNS)}",
+                )
+            tag_conds.append(col == True)
+        if tag_conds:
+            q = q.filter(or_(*tag_conds))
+
     if date_from is not None:
         q = q.filter(Transaction.date >= date_from)
     if date_to is not None:
@@ -103,15 +157,20 @@ def list_transactions(
 def create_transaction(payload: TransactionCreate, db: Session = Depends(get_db)):
     """Manually create a single transaction."""
     # Validate foreign keys
-    account = db.query(Account).get(payload.account_id)
+    account = db.get(Account, payload.account_id)
     if not account:
         raise HTTPException(status_code=404, detail="Account not found")
     if payload.category_id:
-        category = db.query(Category).get(payload.category_id)
+        category = db.get(Category, payload.category_id)
         if not category:
             raise HTTPException(status_code=404, detail="Category not found")
 
     tx = Transaction(**payload.model_dump())
+    # Hash manual transactions too, so a later CSV import containing the same
+    # transaction is recognized as a duplicate instead of re-inserted.
+    tx.dedup_hash = compute_dedup_hash(
+        tx.account_id, tx.date, float(tx.amount), tx.transaction_type, tx.original_description
+    )
     db.add(tx)
     db.commit()
     db.refresh(tx)
@@ -150,12 +209,19 @@ def update_transaction(
     tx = _get_transaction_or_404(transaction_id, db)
 
     if payload.category_id is not None:
-        category = db.query(Category).get(payload.category_id)
+        category = db.get(Category, payload.category_id)
         if not category:
             raise HTTPException(status_code=404, detail="Category not found")
 
-    for field, value in payload.model_dump(exclude_unset=True).items():
+    changed = payload.model_dump(exclude_unset=True)
+    for field, value in changed.items():
         setattr(tx, field, value)
+
+    # Keep the dedup hash in sync when any of its inputs change.
+    if {"date", "amount", "transaction_type"} & changed.keys():
+        tx.dedup_hash = compute_dedup_hash(
+            tx.account_id, tx.date, float(tx.amount), tx.transaction_type, tx.original_description
+        )
 
     db.commit()
     db.refresh(tx)
@@ -173,58 +239,4 @@ def delete_transaction(transaction_id: int, db: Session = Depends(get_db)):
     tx = _get_transaction_or_404(transaction_id, db)
     db.delete(tx)
     db.commit()
-
-
-@router.get("/summary/by-category")
-def spending_by_category(
-    date_from: Optional[date] = Query(None),
-    date_to: Optional[date] = Query(None),
-    account_id: Optional[int] = Query(None),
-    exclude_transfers: bool = Query(True),
-    db: Session = Depends(get_db),
-):
-    """
-    Aggregate spending grouped by top-level category.
-    Used by the budget report and spending breakdown charts.
-    Returns category name, total debits, total credits, and net amount.
-    """
-    q = db.query(Transaction)
-    if date_from:
-        q = q.filter(Transaction.date >= date_from)
-    if date_to:
-        q = q.filter(Transaction.date <= date_to)
-    if account_id:
-        q = q.filter(Transaction.account_id == account_id)
-    if exclude_transfers:
-        q = q.filter(Transaction.is_transfer == False)
-    q = q.filter(Transaction.exclude_from_budget == False)
-
-    transactions = q.all()
-
-    summary: dict[str, dict] = {}
-    uncategorized_key = "Uncategorized"
-
-    for tx in transactions:
-        cat_name = tx.category.name if tx.category else uncategorized_key
-        if cat_name not in summary:
-            summary[cat_name] = {
-                "category_name": cat_name,
-                "category_id": tx.category_id,
-                "total_debits": 0.0,
-                "total_credits": 0.0,
-                "transaction_count": 0,
-            }
-        entry = summary[cat_name]
-        entry["transaction_count"] += 1
-        if tx.transaction_type == TransactionType.DEBIT:
-            entry["total_debits"] += float(tx.amount)
-        else:
-            entry["total_credits"] += float(tx.amount)
-
-    for entry in summary.values():
-        entry["net"] = round(entry["total_credits"] - entry["total_debits"], 2)
-        entry["total_debits"] = round(entry["total_debits"], 2)
-        entry["total_credits"] = round(entry["total_credits"], 2)
-
-    return sorted(summary.values(), key=lambda x: x["total_debits"], reverse=True)
 

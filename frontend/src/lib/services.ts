@@ -8,8 +8,7 @@ import type {
   Category, CategoryCreate, CategoryUpdate,
   Budget, BudgetCreate, BudgetUpdate,
   BudgetVisibleCategories, BudgetVisibleCategoriesUpsert,
-  BudgetReport, CashFlowReport, NetWorthHistory, SpendingTrendsReport, SpendingAveragesReport, MonthlyTotalsReport, EquityHistoryReport,
-  DailySpendingData,
+  BudgetReport, NetWorthHistory, SpendingTrendsReport, SpendingAveragesReport, MonthlyTotalsReport, EquityHistoryReport,
   ImportSource, CSVImportResult, CSVColumnMapping,
   BalanceSnapshot, BalanceSnapshotUpdate,
 } from '@/types'
@@ -43,8 +42,8 @@ export const accountsApi = {
     apiClient.delete(`/accounts/${id}`),
 
   updateBalance: (id: number, balance: number, snapshotDate?: string, notes?: string) =>
-    apiClient.post<Account>(`/accounts/${id}/balance`, null, {
-      params: { balance, snapshot_date: snapshotDate, notes },
+    apiClient.post<Account>(`/accounts/${id}/balance`, {
+      balance, snapshot_date: snapshotDate, notes,
     }).then(r => r.data),
 
   getBalanceHistory: (id: number, limit?: number) =>
@@ -70,7 +69,7 @@ export const accountsApi = {
     form.append('balance_column', balanceColumn)
     form.append('date_format', dateFormat)
     form.append('skip_rows', String(skipRows))
-    return apiClient.post<{ imported: number; errors: string[] }>(
+    return apiClient.post<{ imported: number; skipped: number; errors: string[] }>(
       `/accounts/${accountId}/balance-history/import-csv`,
       form,
       { headers: { 'Content-Type': 'multipart/form-data' } },
@@ -95,8 +94,11 @@ export const balancesApi = {
 
 export interface TransactionFilters {
   account_id?: number
+  account_ids?: string       // comma-separated; server-side multi-select
   category_id?: number
+  category_ids?: string       // comma-separated; server-side multi-select
   uncategorized?: boolean
+  tags?: string               // comma-separated: is_transfer,exclude_from_budget,is_annualized,is_pending
   date_from?: string
   date_to?: string
   transaction_type?: 'debit' | 'credit'
@@ -126,11 +128,6 @@ export const transactionsApi = {
 
   delete: (id: number) =>
     apiClient.delete(`/transactions/${id}`),
-
-  summaryByCategory: (params?: { date_from?: string; date_to?: string; account_id?: number }) =>
-    apiClient.get<{ category_name: string; category_id?: number; total_debits: number; total_credits: number; net: number; transaction_count: number }[]>(
-      '/transactions/summary/by-category', { params }
-    ).then(r => r.data),
 }
 
 // ─── Categories ───────────────────────────────────────────────────────────────
@@ -201,11 +198,6 @@ export const reportsApi = {
       params: accountIds?.length ? { account_ids: accountIds.join(',') } : undefined,
     }).then(r => r.data),
 
-  cashFlow: (year: number, month: number, accountIds?: number[]) =>
-    apiClient.get<CashFlowReport>(`/reports/cash-flow/${year}/${month}`, {
-      params: accountIds?.length ? { account_ids: accountIds.join(',') } : undefined,
-    }).then(r => r.data),
-
   netWorthHistory: (months?: number) =>
     apiClient.get<NetWorthHistory>('/reports/net-worth/history', { params: { months } }).then(r => r.data),
 
@@ -222,14 +214,6 @@ export const reportsApi = {
 
   equityHistory: (months?: number) =>
     apiClient.get<EquityHistoryReport>('/reports/equity/history', { params: { months } }).then(r => r.data),
-
-  currentMonthSummary: () =>
-    apiClient.get<{ cash_flow: CashFlowReport; budget: BudgetReport }>('/reports/summary/current-month').then(r => r.data),
-
-  dailySpending: (year: number, month: number, compareMonths: number) =>
-    apiClient.get<DailySpendingData>('/reports/daily-spending', {
-      params: { year, month, compare_months: compareMonths },
-    }).then(r => r.data),
 }
 
 // ─── CSV Import ───────────────────────────────────────────────────────────────

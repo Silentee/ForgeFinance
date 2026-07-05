@@ -30,6 +30,11 @@ class Category(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True, index=True)
 
+    # Owner. Nullable multi-user prep: endpoints don't scope by user yet.
+    user_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("users.id"), nullable=True, index=True
+    )
+
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     is_income: Mapped[bool] = mapped_column(Boolean, default=False)
     is_system: Mapped[bool] = mapped_column(Boolean, default=False)
@@ -138,19 +143,12 @@ DEFAULT_CATEGORIES = [
 
 # Assign sort_order based on declaration order above, so groups and their
 # children keep the intended ordering when seeded. Done here to avoid
-# hand-maintaining an index on every dict.
+# hand-maintaining an index on every dict. (The sort_order backfill for
+# pre-existing databases lives in alembic revision 0002 as a frozen copy.)
 for _i, _parent in enumerate(DEFAULT_CATEGORIES):
     _parent["sort_order"] = _i
     for _j, _child in enumerate(_parent.get("children", [])):
         _child["sort_order"] = _j
-
-# Flat lookup of the default sort_order for a category name, used by the
-# migration to backfill existing databases created before this column existed.
-DEFAULT_SORT_ORDER: dict[str, int] = {}
-for _parent in DEFAULT_CATEGORIES:
-    DEFAULT_SORT_ORDER[_parent["name"]] = _parent["sort_order"]
-    for _child in _parent.get("children", []):
-        DEFAULT_SORT_ORDER[_child["name"]] = _child["sort_order"]
 
 
 

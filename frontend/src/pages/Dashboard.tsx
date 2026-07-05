@@ -11,16 +11,18 @@ import {
 } from 'recharts'
 import clsx from 'clsx'
 
-const { month, year } = currentYearMonth()
-const prevMonth = month === 1 ? 12 : month - 1
-const prevYear = month === 1 ? year - 1 : year
-
 const CHART_COLORS = [
   '#f5a623', '#34d4b1', '#f87171', '#818cf8',
   '#fb923c', '#a78bfa', '#22d3ee', '#4ade80', '#f472b6',
 ]
 
 export default function Dashboard() {
+  // Computed per render (not at module scope) so an app left open across a
+  // month boundary doesn't keep reporting the previous month as "current".
+  const { month, year } = currentYearMonth()
+  const prevMonth = month === 1 ? 12 : month - 1
+  const prevYear = month === 1 ? year - 1 : year
+
   const { data: netWorth, isLoading: nwLoading } = useNetWorth()
   const { data: nwHistory } = useNetWorthHistory(13)
   const { data: cfTotals } = useMonthlyTotals({ months: 3, year: prevYear, month: prevMonth })

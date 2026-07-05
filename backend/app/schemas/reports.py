@@ -6,11 +6,8 @@ Keeping these in one file makes it easy to see the full data contract
 for the frontend at a glance.
 """
 
-from datetime import date
 from typing import Optional
 from pydantic import BaseModel, field_validator
-
-from app.models.enums import AccountType
 
 
 # ---------------------------------------------------------------------------
@@ -148,32 +145,6 @@ class BudgetReport(BaseModel):
 
     income_lines: list[BudgetLineItem]
     expense_lines: list[BudgetLineItem]
-
-
-# ---------------------------------------------------------------------------
-# Cash flow report — income vs. expenses summary for one month
-# ---------------------------------------------------------------------------
-
-class CashFlowReport(BaseModel):
-    """High-level income/expense summary for a calendar month."""
-    year: int
-    month: int
-    month_label: str
-
-    total_income: float
-    total_expenses: float
-    net_cash_flow: float     # income - expenses
-    savings_rate: Optional[float]  # net / income * 100; None if income == 0
-
-    # Breakdown by account type (useful for seeing credit card vs checking spend)
-    income_by_account_type: dict[str, float]
-    expenses_by_account_type: dict[str, float]
-
-    # Top 5 expense categories by amount
-    top_expense_categories: list[dict]
-
-    # Largest individual transactions (non-transfer)
-    largest_transactions: list[dict]
 
 
 # ---------------------------------------------------------------------------

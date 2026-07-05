@@ -37,6 +37,11 @@ Frontend runs at http://localhost:5173
 - **Backend:** Uses `uv` (not pip). Run `uv sync` in `backend/` to install dependencies.
 - **Frontend:** Uses npm. Run `npm install` in `frontend/` to install dependencies.
 
+### Testing & Migrations
+
+- **Backend tests:** `pytest` from `backend/` (in-memory SQLite fixtures in `tests/`). Cover CSV parsing/dedup, the balance service, and budget-report sign conventions.
+- **Migrations:** Alembic (`backend/alembic/`). `init_db()` runs `alembic upgrade head` on existing databases and stamps fresh ones at head, so you rarely call Alembic by hand. To change the schema: edit the models, then add a numbered revision under `alembic/versions/` with a hand-written `upgrade()` (autogenerate is not wired up).
+
 ## Architecture
 
 ### Backend (FastAPI + SQLAlchemy)
@@ -51,15 +56,19 @@ backend/app/
 └── core/config.py    # Settings loaded from .env
 ```
 
-**API Base:** `/api/v1` with routes for: `/institutions`, `/accounts`, `/transactions`, `/categories`, `/budgets`, `/imports`, `/balances`, `/reports`
+**API Base:** `/api/v1`. Routes: `/auth`, `/institutions`, `/accounts`, `/account-types`, `/transactions`, `/categories`, `/budgets`, `/imports`, `/balances`, `/reports`, `/export`, `/demo`. Everything except `/auth` requires a Bearer token (see Auth below).
 
 **Key Models:**
 - `Institution` → `Account` → `Transaction` (main hierarchy)
 - `Category` (two-level parent/child hierarchy for income/expense)
-- `BalanceSnapshot` (point-in-time values for investments/real estate)
-- `Budget` (monthly targets per category)
+- `BalanceSnapshot` (point-in-time values; **all** account balances are snapshot-driven — see Balance tracking)
+- `Budget` (monthly targets per category; unique on category+year+month)
+- `AccountTypeDef` (DB-backed, user-editable account types; replaces the old hardcoded enum)
+- `User` (single admin login; nullable `user_id` FKs exist on core tables for future multi-user but are not yet enforced in endpoints)
 
-**Account Types:** checking, savings, cash, credit_card, investment, real_estate, vehicle, other_asset, other_liability
+**Auth:** First run has no user — `POST /auth/setup` creates the admin. Thereafter `POST /auth/login` returns a JWT (HS256, `SECRET_KEY` auto-generated into `.env` on first boot). The frontend stores it in localStorage and sends it as `Authorization: Bearer`.
+
+**Account Types:** Stored as `AccountTypeDef` rows keyed by a slug (`checking`, `credit_card`, …). Built-ins are seeded on first run and can be renamed/hidden but not deleted; users can add custom types. `Account.account_type` stores the key. Manage them via the Account Types dialog (Sidebar → settings).
 
 ### Frontend (React + Vite + TanStack Query)
 
@@ -83,14 +92,16 @@ frontend/src/
 
 SQLite stored at `backend/app.db`. Created automatically on first backend startup with default categories seeded.
 
-**Duplicate Prevention:** Transactions have a `dedup_hash` field computed from date + amount + description + account. Re-importing the same CSV safely skips duplicates.
+**Duplicate Prevention:** Transactions have a `dedup_hash` field computed from account + date + amount + **type** + description. Re-importing the same CSV safely skips duplicates, and manually-created transactions are hashed too (so a later CSV import recognizes them). Computed by `services/csv_import.py::compute_dedup_hash`.
 
 ## Key Patterns
 
 - **Pydantic-first API design:** All request/response shapes defined in `schemas/`, matching frontend `types/`
 - **Plaid-ready architecture:** Models have nullable Plaid fields (plaid_account_id, plaid_transaction_id) for future live bank syncing
-- **Balance tracking:** Transaction-based accounts compute balances; investment/real estate accounts use manual BalanceSnapshots
+- **Balance tracking:** All account balances are snapshot-driven. `Account.current_balance` is a denormalized cache of the latest-dated `BalanceSnapshot`. Every snapshot write goes through `services/balances.py::record_snapshot`, which recomputes the cache from the newest snapshot — so a backdated entry never overwrites the current balance. CSV transaction imports do **not** recompute balances; enter balances directly (Accounts page) or import balance-history CSVs.
 - **Net worth calculation:** Sum of all account balances (credit cards and liabilities subtract from total)
+- **Reporting:** Lives in `services/reporting.py`; endpoints in `api/endpoints/reports.py` are thin wrappers. Per-month aggregation with annualized-expense spreading is centralized in `_aggregate_monthly`.
+- **Demo data:** Seeded on first-ever startup when no real accounts exist. "End Demo" (Sidebar) clears it; user-created budgets survive because budgets are only wiped when no real accounts remain.
 
 ## Configuration
 

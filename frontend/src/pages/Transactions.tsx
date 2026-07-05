@@ -374,6 +374,17 @@ function AddTransactionModal({ accounts, categories, onClose }: {
   )
 }
 
+// Debounce a rapidly-changing value (e.g. the search box) so it only drives a
+// query after the user pauses typing.
+function useDebouncedValue<T>(value: T, delayMs: number): T {
+  const [debounced, setDebounced] = useState(value)
+  useEffect(() => {
+    const id = setTimeout(() => setDebounced(value), delayMs)
+    return () => clearTimeout(id)
+  }, [value, delayMs])
+  return debounced
+}
+
 export default function TransactionsPage() {
   const [datePreset, setDatePreset] = useState<DateFilterPreset>('last3Months')
   const [customFrom, setCustomFrom] = useState('')
@@ -440,10 +451,32 @@ export default function TransactionsPage() {
     ? (customFrom && customTo ? { from: customFrom, to: customTo } : null)
     : getDateRange(datePreset)
 
+  // Debounce the free-text search so typing doesn't fire a request per keystroke.
+  const debouncedSearch = useDebouncedValue(filters.search, 300)
+
+  // Account/category/tag selections filter server-side so they apply across the
+  // whole result set, not just the pages already loaded on the client.
+  const accountIdsParam =
+    accountFilter.mode === 'selected' && accountFilter.accountIds.length > 0
+      ? accountFilter.accountIds.join(',') : undefined
+  const categoryIdsParam =
+    categoryFilter.mode === 'selected' && categoryFilter.categoryIds.length > 0
+      ? categoryFilter.categoryIds.join(',') : undefined
+  const uncategorizedParam =
+    categoryFilter.mode === 'selected' && categoryFilter.includeUncategorized ? true : undefined
+  const tagsParam =
+    tagFilter.mode === 'selected' && tagFilter.tags.length > 0
+      ? tagFilter.tags.join(',') : undefined
+
   const queryFilters = {
     ...filters,
+    search: debouncedSearch || undefined,
     date_from: dateRange?.from,
     date_to: dateRange?.to,
+    account_ids: accountIdsParam,
+    category_ids: categoryIdsParam,
+    uncategorized: uncategorizedParam,
+    tags: tagsParam,
   }
 
   const txQuery = useTransactions(queryFilters)
@@ -461,81 +494,47 @@ export default function TransactionsPage() {
     return map
   }, [categories])
 
+  // Account/category/tag filtering happens server-side (see queryFilters). The
+  // only client-side pass left is the cash-flow drill-down exclusion, which uses
+  // exclusion semantics the list endpoint doesn't model.
   const filteredTransactions = useMemo(() => {
     if (!transactions) return undefined
+    if (excludedCfCategoryKeys.length === 0) return transactions
 
-    const hasAccountFilter = accountFilter.mode === 'selected' && accountFilter.accountIds.length > 0
-    const hasCategoryFilter =
-      categoryFilter.mode === 'selected' &&
-      (categoryFilter.categoryIds.length > 0 || categoryFilter.includeUncategorized)
-
-    const hasTagFilter = tagFilter.mode === 'selected' && tagFilter.tags.length > 0
-
-    const accountIdSet = hasAccountFilter ? new Set(accountFilter.accountIds) : undefined
-    const categoryIdSet = hasCategoryFilter ? new Set(categoryFilter.categoryIds) : undefined
-    const tagSet = hasTagFilter ? new Set(tagFilter.tags) : undefined
-
-    const hasCfExclusions = excludedCfCategoryKeys.length > 0
     const excludedCategoryIds = new Set<number>()
     const excludedCategoryNames = new Set<string>()
     let excludeUncategorized = false
 
-    if (hasCfExclusions) {
-      for (const key of excludedCfCategoryKeys) {
-        if (key === 'uncategorized') { excludeUncategorized = true; continue }
-        if (key.startsWith('id:')) {
-          const n = Number(key.slice(3))
-          if (Number.isFinite(n)) excludedCategoryIds.add(n)
-          continue
-        }
-        if (key.startsWith('name:')) {
-          const name = key.slice(5)
-          if (name.toLowerCase() === 'uncategorized') excludeUncategorized = true
-          else if (name) excludedCategoryNames.add(name)
-        }
+    for (const key of excludedCfCategoryKeys) {
+      if (key === 'uncategorized') { excludeUncategorized = true; continue }
+      if (key.startsWith('id:')) {
+        const n = Number(key.slice(3))
+        if (Number.isFinite(n)) excludedCategoryIds.add(n)
+        continue
+      }
+      if (key.startsWith('name:')) {
+        const name = key.slice(5)
+        if (name.toLowerCase() === 'uncategorized') excludeUncategorized = true
+        else if (name) excludedCategoryNames.add(name)
       }
     }
 
     return transactions.filter(tx => {
-      if (hasAccountFilter && accountIdSet && !accountIdSet.has(tx.account_id)) return false
-
-      if (hasCfExclusions) {
-        if (tx.category_id != null && excludedCategoryIds.has(tx.category_id as number)) return false
-        if (excludeUncategorized && tx.category_id == null) return false
-        if (tx.category_name && excludedCategoryNames.has(tx.category_name)) return false
-      }
-
-      if (hasCategoryFilter) {
-        const isUncat = tx.category_id == null
-        const matchesCat =
-          (categoryFilter.includeUncategorized && isUncat) ||
-          (!isUncat && categoryIdSet?.has(tx.category_id as number))
-        if (!matchesCat) return false
-      }
-
-      if (hasTagFilter && tagSet) {
-        const matchesTag =
-          (tagSet.has('is_transfer') && tx.is_transfer) ||
-          (tagSet.has('exclude_from_budget') && tx.exclude_from_budget) ||
-          (tagSet.has('is_annualized') && tx.is_annualized) ||
-          (tagSet.has('is_pending') && tx.is_pending)
-        if (!matchesTag) return false
-      }
-
+      if (tx.category_id != null && excludedCategoryIds.has(tx.category_id as number)) return false
+      if (excludeUncategorized && tx.category_id == null) return false
+      if (tx.category_name && excludedCategoryNames.has(tx.category_name)) return false
       return true
     })
-  }, [transactions, accountFilter, categoryFilter, tagFilter, excludedCfCategoryKeys])
-  const accountsWithTransactions = useMemo(() => {
-    if (!accounts?.length || !transactions?.length) return []
-    const accountIdsWithTransactions = new Set(transactions.map(tx => tx.account_id))
-    return accounts.filter(account => accountIdsWithTransactions.has(account.id))
-  }, [accounts, transactions])
+  }, [transactions, excludedCfCategoryKeys])
 
+  // The account filter dropdown lists all accounts (independent of the current
+  // result set) so selecting one doesn't collapse the choices to just itself.
+  const accountOptions = accounts ?? []
   const accountNameById = useMemo(() => {
     const map = new Map<number, string>()
-    for (const a of accountsWithTransactions) map.set(a.id, a.name)
+    for (const a of accountOptions) map.set(a.id, a.name)
     return map
-  }, [accountsWithTransactions])
+  }, [accountOptions])
   // Group transactions by month
   const transactionsByMonth = useMemo(() => {
     if (!filteredTransactions) return []
@@ -609,22 +608,6 @@ export default function TransactionsPage() {
     (tagFilter.mode === 'selected' && tagFilter.tags.length > 0) ||
     excludedCfCategoryKeys.length > 0
 
-  useEffect(() => {
-    if (accountFilter.mode !== 'selected') return
-    // Don't prune while transactions are still loading — accountsWithTransactions
-    // is empty during (re)fetch, which would wipe a valid selection (e.g. one set
-    // from URL params on arrival from the Import page).
-    if (!transactions) return
-    if (accountFilter.accountIds.length === 0) {
-      setAccountFilter({ mode: 'all', accountIds: [] })
-      return
-    }
-    const valid = new Set(accountsWithTransactions.map(a => a.id))
-    const nextIds = accountFilter.accountIds.filter(id => valid.has(id))
-    if (nextIds.length === accountFilter.accountIds.length) return
-    setAccountFilter(nextIds.length ? { mode: 'selected', accountIds: nextIds } : { mode: 'all', accountIds: [] })
-  }, [accountsWithTransactions, accountFilter, transactions])
-
   return (
     <div className="space-y-6 animate-slide-up">
       <PageHeader
@@ -655,7 +638,7 @@ export default function TransactionsPage() {
               )}
             />
             <FilterDropdown
-              disabled={!accountsWithTransactions.length}
+              disabled={!accountOptions.length}
               isActive={accountFilter.mode === 'selected' && accountFilter.accountIds.length > 0}
               buttonLabel={(() => {
                 if (accountFilter.mode === 'all') return 'All accounts'
@@ -670,7 +653,7 @@ export default function TransactionsPage() {
                 bold
               />
               <div className="h-px bg-white/[0.06] my-1" />
-              {accountsWithTransactions.map(a => (
+              {accountOptions.map(a => (
                 <CheckboxRow
                   key={a.id}
                   checked={accountFilter.mode === 'selected' && accountFilter.accountIds.includes(a.id)}

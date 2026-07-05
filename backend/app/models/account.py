@@ -16,6 +16,10 @@ class Institution(Base):
     __tablename__ = "institutions"
 
     id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    # Owner. Nullable multi-user prep: endpoints don't scope by user yet.
+    user_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("users.id"), nullable=True, index=True
+    )
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     url: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)
     notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
@@ -51,6 +55,11 @@ class Account(Base):
     __tablename__ = "accounts"
 
     id: Mapped[int] = mapped_column(primary_key=True, index=True)
+
+    # Owner. Nullable multi-user prep: endpoints don't scope by user yet.
+    user_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("users.id"), nullable=True, index=True
+    )
 
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     # Stores the `key` of an AccountTypeDef row (e.g. "checking"). Previously a

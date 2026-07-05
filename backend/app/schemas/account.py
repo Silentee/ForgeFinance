@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import date, datetime
 from typing import Optional
 from pydantic import BaseModel, field_validator, model_validator
 
@@ -59,6 +59,13 @@ class AccountUpdate(BaseModel):
         if v is not None and (len(v) != 4 or not v.isdigit()):
             raise ValueError("mask must be exactly 4 digits")
         return v
+
+
+class BalanceUpdate(BaseModel):
+    """Body for POST /accounts/{id}/balance."""
+    balance: float
+    snapshot_date: Optional[date] = None  # defaults to today
+    notes: Optional[str] = None
 
 
 class LinkedAccountInfo(BaseModel):

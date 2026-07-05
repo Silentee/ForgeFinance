@@ -3,7 +3,6 @@ import json
 from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
-from sqlalchemy import and_
 
 from app.db.session import get_db
 from app.api.deps import get_current_user
@@ -13,6 +12,20 @@ from app.schemas.reports import BudgetCreate, BudgetUpdate, BudgetRead
 from app.schemas.budget_visibility import BudgetVisibleCategoriesRead, BudgetVisibleCategoriesUpsert
 
 router = APIRouter()
+
+
+def _to_budget_read(budget: Budget, category_name: Optional[str] = None) -> BudgetRead:
+    return BudgetRead(
+        id=budget.id,
+        category_id=budget.category_id,
+        month=budget.month,
+        year=budget.year,
+        amount=float(budget.amount),
+        notes=budget.notes,
+        category_name=category_name
+        if category_name is not None
+        else (budget.category.name if budget.category else None),
+    )
 
 
 @router.get("/visible-categories", response_model=BudgetVisibleCategoriesRead)
@@ -104,20 +117,7 @@ def list_budgets(
         q = q.filter(Budget.month == month)
 
     budgets = q.order_by(Budget.year.desc(), Budget.month.desc()).all()
-
-    # Enrich with category names
-    result = []
-    for b in budgets:
-        result.append(BudgetRead(
-            id=b.id,
-            category_id=b.category_id,
-            month=b.month,
-            year=b.year,
-            amount=float(b.amount),
-            notes=b.notes,
-            category_name=b.category.name if b.category else None,
-        ))
-    return result
+    return [_to_budget_read(b) for b in budgets]
 
 
 @router.post("", response_model=BudgetRead, status_code=status.HTTP_201_CREATED)
@@ -127,7 +127,7 @@ def create_budget(payload: BudgetCreate, db: Session = Depends(get_db)):
     Returns 409 if a budget for that category/month/year already exists —
     use PATCH to update an existing budget.
     """
-    category = db.query(Category).get(payload.category_id)
+    category = db.get(Category, payload.category_id)
     if not category:
         raise HTTPException(status_code=404, detail="Category not found")
 
@@ -154,16 +154,7 @@ def create_budget(payload: BudgetCreate, db: Session = Depends(get_db)):
     db.add(budget)
     db.commit()
     db.refresh(budget)
-
-    return BudgetRead(
-        id=budget.id,
-        category_id=budget.category_id,
-        month=budget.month,
-        year=budget.year,
-        amount=float(budget.amount),
-        notes=budget.notes,
-        category_name=category.name,
-    )
+    return _to_budget_read(budget, category.name)
 
 
 @router.post("/bulk", response_model=list[BudgetRead], status_code=status.HTTP_201_CREATED)
@@ -179,9 +170,17 @@ def create_budgets_bulk(
     Unlike POST /, this endpoint uses upsert semantics:
     if a budget already exists for that category/month/year, it's updated.
     """
+    # Batch-load categories instead of one query per payload
+    categories = {
+        c.id: c
+        for c in db.query(Category)
+        .filter(Category.id.in_({p.category_id for p in payloads}))
+        .all()
+    }
+
     result = []
     for payload in payloads:
-        category = db.query(Category).get(payload.category_id)
+        category = categories.get(payload.category_id)
         if not category:
             raise HTTPException(
                 status_code=404,
@@ -208,15 +207,7 @@ def create_budgets_bulk(
             db.add(budget)
 
         db.flush()
-        result.append(BudgetRead(
-            id=budget.id,
-            category_id=budget.category_id,
-            month=budget.month,
-            year=budget.year,
-            amount=float(budget.amount),
-            notes=budget.notes,
-            category_name=category.name,
-        ))
+        result.append(_to_budget_read(budget, category.name))
 
     db.commit()
     return result
@@ -224,18 +215,10 @@ def create_budgets_bulk(
 
 @router.get("/{budget_id}", response_model=BudgetRead)
 def get_budget(budget_id: int, db: Session = Depends(get_db)):
-    budget = db.query(Budget).get(budget_id)
+    budget = db.get(Budget, budget_id)
     if not budget:
         raise HTTPException(status_code=404, detail="Budget not found")
-    return BudgetRead(
-        id=budget.id,
-        category_id=budget.category_id,
-        month=budget.month,
-        year=budget.year,
-        amount=float(budget.amount),
-        notes=budget.notes,
-        category_name=budget.category.name if budget.category else None,
-    )
+    return _to_budget_read(budget)
 
 
 @router.patch("/{budget_id}", response_model=BudgetRead)
@@ -244,7 +227,7 @@ def update_budget(
     payload: BudgetUpdate,
     db: Session = Depends(get_db),
 ):
-    budget = db.query(Budget).get(budget_id)
+    budget = db.get(Budget, budget_id)
     if not budget:
         raise HTTPException(status_code=404, detail="Budget not found")
 
@@ -253,21 +236,12 @@ def update_budget(
 
     db.commit()
     db.refresh(budget)
-
-    return BudgetRead(
-        id=budget.id,
-        category_id=budget.category_id,
-        month=budget.month,
-        year=budget.year,
-        amount=float(budget.amount),
-        notes=budget.notes,
-        category_name=budget.category.name if budget.category else None,
-    )
+    return _to_budget_read(budget)
 
 
 @router.delete("/{budget_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_budget(budget_id: int, db: Session = Depends(get_db)):
-    budget = db.query(Budget).get(budget_id)
+    budget = db.get(Budget, budget_id)
     if not budget:
         raise HTTPException(status_code=404, detail="Budget not found")
     db.delete(budget)
@@ -316,15 +290,7 @@ def copy_month_budgets(
                 existing.notes = src.notes
                 budget = existing
             else:
-                result.append(BudgetRead(
-                    id=existing.id,
-                    category_id=existing.category_id,
-                    month=existing.month,
-                    year=existing.year,
-                    amount=float(existing.amount),
-                    notes=existing.notes,
-                    category_name=existing.category.name if existing.category else None,
-                ))
+                result.append(_to_budget_read(existing))
                 continue
         else:
             budget = Budget(
@@ -337,15 +303,7 @@ def copy_month_budgets(
             db.add(budget)
 
         db.flush()
-        result.append(BudgetRead(
-            id=budget.id,
-            category_id=budget.category_id,
-            month=budget.month,
-            year=budget.year,
-            amount=float(budget.amount),
-            notes=budget.notes,
-            category_name=budget.category.name if budget.category else None,
-        ))
+        result.append(_to_budget_read(budget))
 
     db.commit()
     return result

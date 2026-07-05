@@ -9,6 +9,7 @@ import json
 from typing import Optional
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
+from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
@@ -73,7 +74,7 @@ async def upload_csv(
     5. Review the returned counts — re-uploads are always safe
     """
     # Validate account exists
-    account = db.query(Account).get(account_id)
+    account = db.get(Account, account_id)
     if not account:
         raise HTTPException(status_code=404, detail=f"Account {account_id} not found")
 
@@ -104,7 +105,7 @@ async def upload_csv(
         try:
             mapping_data = json.loads(column_mapping)
             mapping = CSVColumnMapping(**mapping_data)
-        except (json.JSONDecodeError, Exception) as e:
+        except (json.JSONDecodeError, TypeError, ValidationError) as e:
             raise HTTPException(
                 status_code=400,
                 detail=f"Invalid column_mapping JSON: {e}",
@@ -151,7 +152,7 @@ def list_imports(
 @router.get("/{import_id}", response_model=ImportSourceRead)
 def get_import(import_id: int, db: Session = Depends(get_db)):
     """Get details of a specific import."""
-    source = db.query(ImportSource).get(import_id)
+    source = db.get(ImportSource, import_id)
     if not source:
         raise HTTPException(status_code=404, detail="Import record not found")
     return source
@@ -171,15 +172,25 @@ def delete_import(
     By default the transactions it created are kept (they become 'manually entered').
     Pass delete_transactions=true to also purge those transactions.
     """
-    source = db.query(ImportSource).get(import_id)
+    source = db.get(ImportSource, import_id)
     if not source:
         raise HTTPException(status_code=404, detail="Import record not found")
 
+    from app.models import BalanceSnapshot, Transaction
+
     if delete_transactions:
-        from app.models import Transaction
         db.query(Transaction).filter(
             Transaction.import_source_id == import_id
         ).delete(synchronize_session=False)
+    else:
+        # Kept transactions must not reference the deleted import record.
+        db.query(Transaction).filter(
+            Transaction.import_source_id == import_id
+        ).update({Transaction.import_source_id: None}, synchronize_session=False)
+
+    db.query(BalanceSnapshot).filter(
+        BalanceSnapshot.import_source_id == import_id
+    ).update({BalanceSnapshot.import_source_id: None}, synchronize_session=False)
 
     db.delete(source)
     db.commit()
