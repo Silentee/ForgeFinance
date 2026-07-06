@@ -1,6 +1,6 @@
 from datetime import datetime
 from typing import Optional
-from sqlalchemy import String, DateTime, Numeric, Text, ForeignKey, Integer, UniqueConstraint
+from sqlalchemy import String, Boolean, DateTime, Numeric, Text, ForeignKey, Integer, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.session import Base
@@ -39,6 +39,10 @@ class Budget(Base):
     amount: Mapped[float] = mapped_column(Numeric(14, 2), nullable=False)
 
     notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    # Demo data flag — mirrors Account.is_demo so leaving demo mode can clear
+    # demo-seeded budgets without touching the user's own budgets.
+    is_demo: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
 
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(

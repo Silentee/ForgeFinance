@@ -604,6 +604,7 @@ def seed_demo_data(db):
                     year=budget_date.year,
                     month=budget_date.month,
                     amount=Decimal(str(amount)),
+                    is_demo=True,
                 )
                 db.add(budget)
 

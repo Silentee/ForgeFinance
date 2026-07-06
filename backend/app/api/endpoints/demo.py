@@ -61,8 +61,14 @@ def clear_demo_data(db: Session = Depends(get_db)):
         synchronize_session=False
     )
 
-    # Budgets aren't flagged as demo, so only wipe them when everything in the
-    # DB is demo data — never destroy budgets the user created themselves.
+    # Demo-seeded budgets carry is_demo=True — always remove them so leaving
+    # demo mode never leaves demo targets on the budget page, even once the
+    # user has added real accounts. Budgets the user created themselves
+    # (is_demo=False) are always preserved.
+    db.query(Budget).filter(Budget.is_demo == True).delete(synchronize_session=False)
+
+    # If nothing real remains, this was a pure demo sandbox — clear any stray
+    # budgets left over from poking around so the user truly starts fresh.
     has_real_accounts = db.query(Account).filter(Account.is_demo == False).count() > 0
     if not has_real_accounts:
         db.query(Budget).delete(synchronize_session=False)

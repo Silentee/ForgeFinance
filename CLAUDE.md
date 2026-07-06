@@ -101,7 +101,7 @@ SQLite stored at `backend/app.db`. Created automatically on first backend startu
 - **Balance tracking:** All account balances are snapshot-driven. `Account.current_balance` is a denormalized cache of the latest-dated `BalanceSnapshot`. Every snapshot write goes through `services/balances.py::record_snapshot`, which recomputes the cache from the newest snapshot — so a backdated entry never overwrites the current balance. CSV transaction imports do **not** recompute balances; enter balances directly (Accounts page) or import balance-history CSVs.
 - **Net worth calculation:** Sum of all account balances (credit cards and liabilities subtract from total)
 - **Reporting:** Lives in `services/reporting.py`; endpoints in `api/endpoints/reports.py` are thin wrappers. Per-month aggregation with annualized-expense spreading is centralized in `_aggregate_monthly`.
-- **Demo data:** Seeded on first-ever startup when no real accounts exist. "End Demo" (Sidebar) clears it; user-created budgets survive because budgets are only wiped when no real accounts remain.
+- **Demo data:** Seeded on first-ever startup when no real accounts exist. "End Demo" (Sidebar) clears it. Demo-seeded budgets carry `is_demo=True` (like demo accounts) and are always removed on clear, so leaving demo never leaves demo targets on the budget page even after the user has added a real account. User-created budgets (`is_demo=False`) survive; if no real account remains, the clear also wipes any stray budgets so the sandbox starts fresh.
 
 ## Configuration
 

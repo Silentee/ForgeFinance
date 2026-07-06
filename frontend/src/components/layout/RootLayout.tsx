@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { Link, Outlet, useLocation } from 'react-router-dom'
 import Sidebar from './Sidebar'
+import DemoModeDialog from '@/components/DemoModeDialog'
 
 export default function RootLayout() {
   const [drawerOpen, setDrawerOpen] = useState(false)
@@ -47,6 +48,9 @@ export default function RootLayout() {
 
   return (
     <div className="flex h-screen bg-surface-950 grid-bg bg-grid-40 overflow-hidden">
+      {/* Full-screen demo-mode alert, shown on each app load while demo data is live */}
+      <DemoModeDialog />
+
       {/* Desktop sidebar (unchanged, hidden on mobile) */}
       <div className="hidden md:flex">
         <Sidebar />
