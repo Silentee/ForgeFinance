@@ -5,6 +5,7 @@ Runs entirely on your local network — your data never leaves your machines.
 
 ---
 <img width="1896" height="837" alt="image" src="https://github.com/user-attachments/assets/b8ff8ea2-bfea-449a-a2fc-69b464a06ab9" />
+
 ---
 
 ## Prerequisites
