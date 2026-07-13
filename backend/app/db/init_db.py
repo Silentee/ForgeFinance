@@ -12,12 +12,12 @@ decides which Alembic action applies (see run_migrations) and seeds data.
 import random
 from datetime import date, datetime, timedelta
 from decimal import Decimal
-from pathlib import Path
 
 from alembic import command
 from alembic.config import Config
 from sqlalchemy import inspect
 
+from app.core.paths import resource_dir
 from app.db.session import engine, SessionLocal, Base
 from app.models import (
     Category, Account, Transaction, BalanceSnapshot, Budget,
@@ -29,9 +29,6 @@ from app.models.enums import AccountType, TransactionType, BalanceType
 # Import all models so they're registered with Base.metadata
 import app.models  # noqa: F401
 
-_BACKEND_DIR = Path(__file__).resolve().parents[2]
-
-
 def create_tables():
     print("Creating database tables...")
     Base.metadata.create_all(bind=engine)
@@ -39,8 +36,11 @@ def create_tables():
 
 
 def _alembic_config() -> Config:
-    cfg = Config(str(_BACKEND_DIR / "alembic.ini"))
-    cfg.set_main_option("script_location", str(_BACKEND_DIR / "alembic"))
+    # resource_dir() is backend/ in dev/Docker and sys._MEIPASS when frozen,
+    # so alembic.ini + alembic/ resolve correctly inside the packaged bundle.
+    root = resource_dir()
+    cfg = Config(str(root / "alembic.ini"))
+    cfg.set_main_option("script_location", str(root / "alembic"))
     return cfg
 
 
@@ -620,13 +620,19 @@ def ensure_secret_key():
     import os
     import secrets
     from app.core.config import settings
+    from app.core.paths import data_dir, is_desktop
 
     if settings.secret_key:
         return
 
     new_key = secrets.token_urlsafe(32)
 
-    env_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), ".env")
+    # Desktop mode writes to the per-user data dir (the install dir is
+    # read-only); dev/Docker keep persisting to backend/.env as before.
+    if is_desktop():
+        env_path = str(data_dir() / ".env")
+    else:
+        env_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), ".env")
     if os.path.exists(env_path):
         with open(env_path, "r") as f:
             content = f.read()

@@ -8,7 +8,28 @@ Runs entirely on your local network — your data never leaves your machines.
 
 ---
 
+## Install on Windows (Easiest — No Setup)
+
+If you just want to **use** Forge Finance on a single Windows PC, install the desktop app. You don't need Python, Node, or any commands — it runs in its own window like any normal app.
+
+1. Go to the [Releases](../../releases) page and download the latest **`ForgeFinanceSetup-x.y.z.exe`**.
+2. Double-click it. Windows may show a blue **"Windows protected your PC"** screen because the app isn't code-signed — click **More info → Run anyway**. (This is expected for small independent apps.)
+3. Install (no administrator rights needed). A **Forge Finance** shortcut is added to your Start menu.
+4. Launch it from the Start menu. The first start takes a few seconds while it sets up your database.
+
+Notes:
+- The app opens with a **demo account** so you can look around. When you're ready, click **End Demo** in the sidebar to clear it and start fresh.
+- Your data is stored on your PC at `%LOCALAPPDATA%\ForgeFinance\app.db`. To back it up, copy that file somewhere safe.
+- Uninstall from **Settings → Apps**. It will ask whether to also delete your data (choose **No** to keep it for a future reinstall).
+- Requires the Microsoft **Edge WebView2 Runtime**, which is already on Windows 11 and up-to-date Windows 10. If it's missing, the app points you to the free download.
+
+> The rest of this README covers running from source and self-hosting (e.g., on a Raspberry Pi), which is aimed at developers.
+
+---
+
 ## Prerequisites
+
+> These are only needed to run from source or self-host. If you installed the Windows desktop app above, skip this.
 
 Before running Forge Finance, install the following dependencies:
 
@@ -338,6 +359,27 @@ sudo ufw allow 5173/tcp
 
 ---
 
+## Building the Windows Installer (Developer)
+
+This produces the `ForgeFinanceSetup-x.y.z.exe` that friends install (see [Install on Windows](#install-on-windows--easiest--no-setup)). It bundles the frontend, backend, and a Python runtime into a single windowed app via PyInstaller, then wraps it in an Inno Setup installer. End users need none of the tools below.
+
+**Build-machine prerequisites:**
+- Node.js 20+ and `uv` (same as the source setup above)
+- [Inno Setup 6](https://jrsoftware.org/isdl.php) (provides `ISCC.exe`)
+- `installer/forge.ico` is committed already. To regenerate it from `frontend/dist/favicon.svg`, use any SVG→ICO tool (e.g. ImageMagick: `magick -background none favicon.svg -define icon:auto-resize=256,128,64,48,32,16 installer/forge.ico`).
+
+**Build:**
+```powershell
+powershell -ExecutionPolicy Bypass -File installer\build.ps1
+```
+This builds the frontend, freezes the backend with PyInstaller, and compiles the installer to `installer\Output\ForgeFinanceSetup-<version>.exe`. Use `-SkipInstaller` to stop after producing the standalone app folder (`installer\dist\ForgeFinance\`) without compiling the installer.
+
+**Versioning:** the version comes from `version` in `backend/pyproject.toml` — bump it there before a release; `build.ps1` stamps the installer filename and Inno Setup metadata from it.
+
+**How it works:** the packaged app runs in "desktop mode" (detected via PyInstaller's `sys.frozen`). In that mode FastAPI serves the bundled React build same-origin and stores the database + secret key in `%LOCALAPPDATA%\ForgeFinance` instead of the (read-only) install directory. Normal source runs and the Docker/Pi deployment are unaffected. Desktop packaging lives in `installer/` and `backend/desktop.py`; the desktop-only Python deps are in the `desktop` dependency group (`uv sync --group desktop`), which Docker never installs.
+
+---
+
 ## Features
 
 - **Dashboard** — net worth KPIs, recent transactions, account summary
@@ -421,4 +463,4 @@ Open a **new terminal** after installing uv. The PATH update requires a fresh te
 Add the origin URL (e.g., `http://192.168.1.50:5173`) to `cors_origins` in `backend/app/core/config.py` and restart the backend.
 
 ### Database location
-The SQLite database is created at `backend/app.db` on first run. Back up this file to preserve your data.
+When run from source, the SQLite database is created at `backend/app.db` on first run. The **Windows desktop app** instead stores it at `%LOCALAPPDATA%\ForgeFinance\app.db` (so it survives reinstalls). Back up the relevant file to preserve your data.

@@ -48,12 +48,27 @@ echo Starting backend in a new window...
 REM Note: cmd.exe escaping uses doubled quotes inside a quoted /k argument.
 start "Forge Finance - Backend" cmd /k "cd /d ""%ROOT_DIR%\backend"" && start.bat"
 
-REM Give the backend a few seconds to come up before the frontend proxy hits it.
-timeout /t 3 /nobreak >nul
+REM ---- Wait for the backend to actually answer before starting the frontend.
+REM The first run builds the Python env (uv sync), which can take minutes, so
+REM poll /health instead of guessing with a fixed delay. curl ships with
+REM Windows 10 1803+.
+echo Waiting for the backend at http://localhost:8000 (first run can take a few minutes)...
+set /a TRIES=0
+:wait_backend
+curl -s -o nul --max-time 2 http://localhost:8000/health && goto backend_ready
+set /a TRIES+=1
+if %TRIES% GEQ 300 (
+    echo WARNING: backend did not respond after ~10 minutes. Starting the frontend anyway.
+    goto backend_ready
+)
+timeout /t 2 /nobreak >nul
+goto wait_backend
+:backend_ready
+echo Backend is up.
 
-REM ---- Open browser - after a short delay to let Vite finish starting ----
-REM Runs in a hidden background cmd so it doesn't block the frontend window.
-start "" cmd /c "timeout /t 4 /nobreak >nul && start http://localhost:5173"
+REM ---- Open the browser once Vite is answering on 5173 ----
+REM Background cmd polls so it doesn't block the frontend window below.
+start "" cmd /c "for /l %%i in (1,1,60) do (curl -s -o nul --max-time 2 http://localhost:5173 && (start http://localhost:5173 & exit /b)) & timeout /t 1 /nobreak >nul"
 
 REM ---- Frontend - run in this window ----
 echo Starting frontend...

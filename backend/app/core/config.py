@@ -1,9 +1,13 @@
+import os
+
 from pydantic_settings import BaseSettings
+
+from app.core import paths
 
 
 class Settings(BaseSettings):
     app_name: str = "Forge Finance"
-    app_version: str = "1.0"
+    app_version: str = "1.0.0"
     debug: bool = True
 
     # Database — SQLite by default, easily swappable
@@ -30,10 +34,29 @@ class Settings(BaseSettings):
     plaid_env: str = "sandbox"   # sandbox | development | production
 
     model_config = {
-        "env_file": ".env",
+        # Desktop mode keeps all persistent config (notably the generated
+        # SECRET_KEY) in the per-user data dir, ignoring any stray .env next
+        # to the executable or CWD. Dev/Docker read backend/.env as before.
+        "env_file": (
+            str(paths.data_dir() / ".env")
+            if paths.is_desktop()
+            else ".env"
+        ),
         "env_file_encoding": "utf-8",
         "extra": "ignore",
     }
 
 
 settings = Settings()
+
+# In the packaged desktop app the process CWD is not writable (Program Files
+# style install), so redirect the default CWD-relative SQLite path into the
+# per-user data dir. An explicit DATABASE_URL (e.g. Docker's) always wins, and
+# non-desktop runs are untouched. Must happen here, before app.db.session
+# builds the engine from settings.database_url at import time.
+if (
+    paths.is_desktop()
+    and not os.environ.get("DATABASE_URL")
+    and settings.database_url == "sqlite:///./app.db"
+):
+    settings.database_url = "sqlite:///" + (paths.data_dir() / "app.db").as_posix()

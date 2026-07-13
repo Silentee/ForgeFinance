@@ -5,3 +5,12 @@ backups/
 app*.db
 *.backup
 *.xlsx
+
+# Windows desktop installer build outputs (installer/build.ps1)
+installer/dist/
+installer/build/
+installer/staging/
+installer/Output/
+
+# Desktop-mode local frontend build served by FastAPI (staged during dev tests)
+backend/frontend_dist/
