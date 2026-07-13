@@ -1,13 +1,19 @@
 import { useMemo, useState } from 'react'
+import { useQuery } from '@tanstack/react-query'
 import {
   useCategories,
   useSubscriptionsReport,
   useUpsertSubscriptionRule,
   useDeleteSubscriptionRule,
   useSetSubscriptionNickname,
+  useSetSubscriptionCadence,
+  useCreateManualSubscription,
+  useResolveMerchantKeys,
   useLinkSubscriptions,
   useUnlinkSubscription,
+  useDebouncedValue,
 } from '@/hooks'
+import { transactionsApi } from '@/lib/services'
 import { Button, Card, CheckboxRow, FilterDropdown, Modal, Spinner } from '@/components/ui'
 import {
   formatCurrency,
@@ -15,7 +21,12 @@ import {
   formatDateShort,
   sortBySortOrder,
 } from '@/lib/format'
-import type { SubscriptionCadence, SubscriptionItem, SubscriptionsReport } from '@/types'
+import type {
+  SubscriptionCadence,
+  SubscriptionCadenceOverride,
+  SubscriptionItem,
+  SubscriptionsReport,
+} from '@/types'
 import clsx from 'clsx'
 
 const CADENCE_LABELS: Record<SubscriptionCadence, string> = {
@@ -27,6 +38,11 @@ const CADENCE_LABELS: Record<SubscriptionCadence, string> = {
   annual: 'Yearly',
   irregular: 'Irregular',
 }
+
+// 'irregular' is only ever derived by detection, never settable as an override.
+const CADENCE_OVERRIDE_OPTIONS: SubscriptionCadenceOverride[] = [
+  'weekly', 'biweekly', 'monthly', 'quarterly', 'semiannual', 'annual',
+]
 
 const CANDIDATE_REASONS: Record<string, string> = {
   irregular_cadence: 'charges arrive at irregular intervals',
@@ -110,12 +126,20 @@ function SubscriptionRows({
                       tagged
                     </span>
                   )}
-                  {item.linked_keys.length > 0 && (
+                  {item.linked_merchants.length > 0 && (
                     <span
                       className="ml-2 rounded-full bg-cyan-400/10 px-2 py-0.5 text-2xs text-cyan-400"
-                      title={`Includes ${item.linked_keys.join(', ')}`}
+                      title={`Includes ${item.linked_merchants.map(m => m.display_name).join(', ')}`}
                     >
-                      linked ×{item.linked_keys.length + 1}
+                      linked ×{item.linked_merchants.length + 1}
+                    </span>
+                  )}
+                  {item.has_duplicates && (
+                    <span
+                      className="ml-2 rounded-full bg-rose-400/10 px-2 py-0.5 text-2xs text-rose-400"
+                      title={`Charged more than once in: ${item.duplicate_periods.join(', ')}`}
+                    >
+                      duplicate?
                     </span>
                   )}
                 </div>
@@ -178,14 +202,17 @@ function EditSubscriptionDialog({
   onClose: () => void
 }) {
   const setNickname = useSetSubscriptionNickname()
+  const setCadence = useSetSubscriptionCadence()
   const linkSubs = useLinkSubscriptions()
   const unlinkSub = useUnlinkSubscription()
 
   const [nickname, setNicknameText] = useState(item.nickname ?? '')
+  const [cadence, setCadenceValue] = useState<string>(item.cadence_override ?? '')
   const [search, setSearch] = useState('')
   const [selected, setSelected] = useState<Set<string>>(new Set())
 
-  const busy = setNickname.isPending || linkSubs.isPending || unlinkSub.isPending
+  const busy =
+    setNickname.isPending || setCadence.isPending || linkSubs.isPending || unlinkSub.isPending
 
   // Other report rows that can be merged into this subscription. Rows
   // already linked somewhere don't appear in the report, so this list is
@@ -221,6 +248,15 @@ function EditSubscriptionDialog({
     setNickname.mutate({
       merchant_key: item.merchant_key,
       nickname: nickname.trim() || undefined,
+    })
+  }
+
+  const cadenceDirty = cadence !== (item.cadence_override ?? '')
+  const saveCadence = () => {
+    if (!cadenceDirty) return
+    setCadence.mutate({
+      merchant_key: item.merchant_key,
+      cadence: (cadence || undefined) as SubscriptionCadenceOverride | undefined,
     })
   }
 
@@ -270,30 +306,76 @@ function EditSubscriptionDialog({
           </p>
         </div>
 
-        {item.linked_keys.length > 0 && (
-          <div>
-            <label className="label block mb-1.5">Linked merchants</label>
-            <div className="space-y-1">
-              {item.linked_keys.map(key => (
-                <div
-                  key={key}
-                  className="flex items-center justify-between gap-2 rounded border border-white/[0.06] px-3 py-1.5"
-                >
-                  <span className="text-sm text-ink-200 truncate" title={key}>
-                    {key}
-                  </span>
-                  <button
-                    onClick={() => unlinkSub.mutate({ merchant_key: key })}
-                    disabled={busy}
-                    className="shrink-0 text-xs text-ink-400 hover:text-rose-400 disabled:opacity-50"
-                  >
-                    Unlink
-                  </button>
-                </div>
+        <div>
+          <label className="label block mb-1.5">Cadence</label>
+          <div className="flex gap-2">
+            <select
+              value={cadence}
+              onChange={e => setCadenceValue(e.target.value)}
+              className="min-w-0 flex-1 bg-surface-700 border border-white/[0.08] rounded-lg px-3 py-2 text-sm text-ink-100 focus:outline-none focus:border-amber-400/40"
+            >
+              <option value="">Auto-detect</option>
+              {CADENCE_OVERRIDE_OPTIONS.map(c => (
+                <option key={c} value={c}>
+                  {CADENCE_LABELS[c]}
+                </option>
               ))}
-            </div>
+            </select>
+            <Button
+              size="sm"
+              onClick={saveCadence}
+              loading={setCadence.isPending}
+              disabled={busy || !cadenceDirty}
+            >
+              Save
+            </Button>
+          </div>
+          <p className="text-2xs text-ink-400 mt-1">
+            Overrides the detected billing interval — affects monthly cost, next-expected
+            date, lapse detection, and duplicate warnings.
+          </p>
+        </div>
+
+        {item.has_duplicates && (
+          <div className="rounded-lg border border-amber-400/20 bg-amber-400/5 px-3 py-2 text-xs text-amber-300">
+            Charged more than once in: {item.duplicate_periods.join(', ')}. Possible
+            duplicate subscription — totals are unaffected.
           </div>
         )}
+
+        <div>
+          <label className="label block mb-1.5">Linked merchants</label>
+          <div className="space-y-1">
+            <div className="flex items-center justify-between gap-2 rounded border border-white/[0.06] px-3 py-1.5">
+              <span className="text-sm text-ink-200 truncate" title={item.merchant_key}>
+                {item.display_name}
+              </span>
+              <span className="shrink-0 rounded-full bg-white/[0.06] px-2 py-0.5 text-2xs text-ink-400">
+                primary
+              </span>
+            </div>
+            {item.linked_merchants.map(m => (
+              <div
+                key={m.key}
+                className="flex items-center justify-between gap-2 rounded border border-white/[0.06] px-3 py-1.5"
+              >
+                <span className="text-sm text-ink-200 truncate" title={m.key}>
+                  {m.display_name}
+                </span>
+                <button
+                  onClick={() => unlinkSub.mutate({ merchant_key: m.key })}
+                  disabled={busy}
+                  className="shrink-0 text-xs text-ink-400 hover:text-rose-400 disabled:opacity-50"
+                >
+                  Unlink
+                </button>
+              </div>
+            ))}
+          </div>
+          <p className="text-2xs text-ink-400 mt-1">
+            All merchant names whose charges count toward this subscription.
+          </p>
+        </div>
 
         <div>
           <label className="label block mb-1.5">Link another charge</label>
@@ -345,11 +427,172 @@ function EditSubscriptionDialog({
   )
 }
 
+function AddSubscriptionDialog({
+  report,
+  onClose,
+}: {
+  report: SubscriptionsReport
+  onClose: () => void
+}) {
+  const createManual = useCreateManualSubscription()
+
+  const [name, setName] = useState('')
+  const [search, setSearch] = useState('')
+  const [selected, setSelected] = useState<Set<number>>(new Set())
+
+  const query = useDebouncedValue(search.trim(), 300)
+  const { data: results, isFetching } = useQuery({
+    queryKey: ['transactions', 'sub-search', query],
+    queryFn: () => transactionsApi.list({ search: query, transaction_type: 'debit', limit: 25 }),
+    enabled: query.length >= 2,
+  })
+
+  const selectedIds = useMemo(() => Array.from(selected), [selected])
+  const { data: resolutions } = useResolveMerchantKeys(selectedIds)
+
+  // The subscription tracks merchants, not individual transactions: each
+  // picked transaction resolves to its normalized merchant key, and every
+  // past and future charge under that key counts toward the subscription.
+  const merchantKeys = useMemo(() => {
+    const keys: string[] = []
+    for (const r of resolutions ?? []) {
+      if (!keys.includes(r.merchant_key)) keys.push(r.merchant_key)
+    }
+    return keys
+  }, [resolutions])
+
+  // Attaching a merchant that already belongs to another subscription moves
+  // it there — warn so that isn't a surprise.
+  const existingHome = (key: string): string | null => {
+    for (const s of [...report.subscriptions, ...report.dismissed]) {
+      if (s.merchant_key === key || s.linked_merchants.some(m => m.key === key)) {
+        return displayName(s)
+      }
+    }
+    return null
+  }
+
+  const toggleSelected = (id: number) =>
+    setSelected(prev => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+
+  const canCreate = name.trim().length > 0 && merchantKeys.length > 0 && !createManual.isPending
+  const create = () =>
+    createManual.mutate(
+      { name: name.trim(), merchant_keys: merchantKeys },
+      { onSuccess: onClose }
+    )
+
+  return (
+    <Modal onClose={onClose}>
+      <h3 className="text-lg font-medium text-ink-100 mb-1">Add subscription</h3>
+      <p className="text-xs text-ink-400 mb-4">
+        Track a recurring charge the detector missed. Pick one of its transactions —
+        the merchant is attached, so future charges count automatically.
+      </p>
+
+      <div className="space-y-5">
+        <div>
+          <label className="label block mb-1.5">Name</label>
+          <input
+            value={name}
+            onChange={e => setName(e.target.value)}
+            placeholder="e.g. Gym membership"
+            maxLength={120}
+            className="w-full bg-surface-700 border border-white/[0.08] rounded-lg px-3 py-2 text-sm text-ink-100 focus:outline-none focus:border-amber-400/40"
+          />
+        </div>
+
+        <div>
+          <label className="label block mb-1.5">Attach transactions</label>
+          <input
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            placeholder="Search transactions by description or merchant…"
+            className="w-full bg-surface-700 border border-white/[0.08] rounded-lg px-3 py-2 text-sm text-ink-100 focus:outline-none focus:border-amber-400/40 mb-1"
+          />
+          {query.length < 2 ? (
+            <p className="text-xs text-ink-400 px-2 py-2">
+              Type at least 2 characters to search your charges.
+            </p>
+          ) : isFetching && !results ? (
+            <div className="flex justify-center py-3">
+              <Spinner size="sm" />
+            </div>
+          ) : (
+            <div className="max-h-48 overflow-y-auto">
+              {(results ?? []).map(tx => (
+                <CheckboxRow
+                  key={tx.id}
+                  checked={selected.has(tx.id)}
+                  label={tx.merchant_name || tx.description || tx.original_description}
+                  sublabel={`${formatDateShort(tx.date)} · ${formatCurrency(tx.amount)}${
+                    tx.account_name ? ` · ${tx.account_name}` : ''
+                  }`}
+                  disabled={createManual.isPending}
+                  onToggle={() => toggleSelected(tx.id)}
+                />
+              ))}
+              {(results ?? []).length === 0 && (
+                <p className="text-xs text-ink-400 px-2 py-2">No matching charges.</p>
+              )}
+            </div>
+          )}
+        </div>
+
+        {merchantKeys.length > 0 && (
+          <div>
+            <label className="label block mb-1.5">Will track</label>
+            <div className="flex flex-wrap gap-1.5">
+              {merchantKeys.map(key => {
+                const home = existingHome(key)
+                return (
+                  <span
+                    key={key}
+                    className={clsx(
+                      'rounded-full px-2 py-0.5 text-2xs',
+                      home ? 'bg-amber-400/10 text-amber-300' : 'bg-cyan-400/10 text-cyan-400'
+                    )}
+                    title={home ? `Currently part of "${home}" — it will be moved here.` : key}
+                  >
+                    {key}
+                    {home && ` (moved from ${home})`}
+                  </span>
+                )
+              })}
+            </div>
+          </div>
+        )}
+
+        <div className="flex justify-end gap-2">
+          <Button size="sm" variant="ghost" onClick={onClose} disabled={createManual.isPending}>
+            Cancel
+          </Button>
+          <Button
+            size="sm"
+            variant="primary"
+            onClick={create}
+            loading={createManual.isPending}
+            disabled={!canCreate}
+          >
+            Add subscription
+          </Button>
+        </div>
+      </div>
+    </Modal>
+  )
+}
+
 export default function SubscriptionsTab() {
   const [months, setMonths] = useState(24)
   const [taggedOnly, setTaggedOnly] = useState(false)
   const [showDismissed, setShowDismissed] = useState(false)
   const [showCandidates, setShowCandidates] = useState(false)
+  const [showAdd, setShowAdd] = useState(false)
   // Keyed by merchant_key (not the item object) so the open dialog reflects
   // the freshly refetched report after each nickname/link mutation.
   const [editingKey, setEditingKey] = useState<string | null>(null)
@@ -552,6 +795,9 @@ export default function SubscriptionsTab() {
             <option value={24}>24 months</option>
             <option value={36}>36 months</option>
           </select>
+          <Button size="sm" variant="primary" onClick={() => setShowAdd(true)}>
+            Add subscription
+          </Button>
         </div>
       </div>
 
@@ -699,6 +945,8 @@ export default function SubscriptionsTab() {
           onClose={() => setEditingKey(null)}
         />
       )}
+
+      {showAdd && <AddSubscriptionDialog report={report} onClose={() => setShowAdd(false)} />}
     </div>
   )
 }

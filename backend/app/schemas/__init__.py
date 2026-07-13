@@ -21,7 +21,9 @@ from app.schemas.reports import (
 )
 from app.schemas.budget_visibility import BudgetVisibleCategoriesRead, BudgetVisibleCategoriesUpsert
 from app.schemas.subscriptions import (
-    SubscriptionItem, SubscriptionCandidate, SubscriptionsReport,
+    SubscriptionItem, SubscriptionCandidate, SubscriptionsReport, LinkedMerchantRead,
     SubscriptionRuleUpsert, SubscriptionRuleRead,
     SubscriptionNicknameUpsert, SubscriptionLinkRequest, SubscriptionUnlinkRequest,
+    SubscriptionCadenceUpsert, ManualSubscriptionCreate,
+    MerchantKeyResolveRequest, MerchantKeyResolution,
 )

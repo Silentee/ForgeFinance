@@ -28,6 +28,7 @@ from sqlalchemy.orm import Session
 from app.models import Category, SubscriptionRule, Transaction
 from app.models.enums import TransactionType
 from app.schemas.subscriptions import (
+    LinkedMerchantRead,
     SubscriptionCandidate,
     SubscriptionItem,
     SubscriptionsReport,
@@ -202,6 +203,9 @@ class _GroupStats(NamedTuple):
     cadence: Optional[str]
     median_interval: float
     amounts_ok: bool
+    # Raw charge count per date — _collapse_occurrences sums same-day
+    # charges into one occurrence, but duplicate detection needs them.
+    day_counts: dict[date, int]
 
 
 def _analyze_group(
@@ -236,7 +240,51 @@ def _analyze_group(
     return _GroupStats(
         occurrences, display_name, category_id, category_name,
         cadence, median_interval, amounts_ok,
+        dict(Counter(tx.date for tx in txs)),
     )
+
+
+# Calendar-period keys for duplicate detection: a cadence of one-per-period
+# means two charges inside the same period are a likely duplicate.
+_PERIOD_KEYS = {
+    "monthly": lambda d: f"{d.year}-{d.month:02d}",
+    "quarterly": lambda d: f"{d.year}-Q{(d.month - 1) // 3 + 1}",
+    "semiannual": lambda d: f"{d.year}-H{1 if d.month <= 6 else 2}",
+    "annual": lambda d: str(d.year),
+}
+
+
+def _find_duplicates(
+    dates: list[date],
+    day_counts: dict[date, int],
+    cadence: Optional[str],
+) -> tuple[bool, list[str]]:
+    """Flag charges arriving more often than the cadence implies.
+
+    Monthly and slower bucket by calendar period (a monthly charge drifting
+    across a month boundary can false-positive — acceptable for a
+    warning-only signal). Weekly/biweekly flag gaps under half the nominal
+    interval, since calendar weeks don't align with billing weeks.
+    Warning only — never changes totals or detection status.
+    """
+    if cadence is None or cadence not in CADENCE_BUCKETS:
+        return False, []
+
+    if cadence in _PERIOD_KEYS:
+        period_key = _PERIOD_KEYS[cadence]
+        buckets: Counter[str] = Counter()
+        for d in dates:
+            buckets[period_key(d)] += day_counts.get(d, 1)
+        periods = sorted(p for p, n in buckets.items() if n >= 2)
+        return bool(periods), periods
+
+    # weekly / biweekly
+    nominal = 365.25 / CADENCE_BUCKETS[cadence][2]
+    flagged = {d for d in dates if day_counts.get(d, 1) >= 2}
+    for a, b in zip(dates, dates[1:]):
+        if (b - a).days < nominal / 2:
+            flagged.add(b)
+    return bool(flagged), sorted(d.isoformat() for d in flagged)
 
 
 def _build_item(
@@ -248,7 +296,8 @@ def _build_item(
     rule_id: Optional[int],
     today: date,
     nickname: Optional[str] = None,
-    linked_keys: Optional[list[str]] = None,
+    linked_merchants: Optional[list[LinkedMerchantRead]] = None,
+    cadence_override: Optional[str] = None,
 ) -> SubscriptionItem:
     cadence = g.cadence
     median_interval = g.median_interval
@@ -267,7 +316,16 @@ def _build_item(
         round((amount / previous_amount - 1) * 100, 1) if price_increased else None
     )
 
-    if cadence is not None:
+    if cadence_override is not None:
+        # User-forced cadence: all interval math uses the nominal cadence
+        # length, not the observed median (which reflects the wrong cadence).
+        cadence = cadence_override
+        periods_per_year = CADENCE_BUCKETS[cadence][2]
+        nominal_interval = 365.25 / periods_per_year
+        monthly_equivalent = round(amount * periods_per_year / 12.0, 2)
+        next_expected = last_charged + timedelta(days=round(nominal_interval))
+        lapsed_after_days = LAPSED_INTERVAL_FACTOR * nominal_interval
+    elif cadence is not None:
         periods_per_year = CADENCE_BUCKETS[cadence][2]
         monthly_equivalent = round(amount * periods_per_year / 12.0, 2)
         next_expected = last_charged + timedelta(days=round(median_interval))
@@ -280,12 +338,17 @@ def _build_item(
 
     status = "lapsed" if (today - last_charged).days > lapsed_after_days else "active"
 
+    has_duplicates, duplicate_periods = _find_duplicates(
+        dates, g.day_counts, cadence if cadence != "irregular" else None
+    )
+
     return SubscriptionItem(
         merchant_key=merchant_key,
         display_name=g.display_name,
         nickname=nickname,
-        linked_keys=linked_keys or [],
+        linked_merchants=linked_merchants or [],
         cadence=cadence,
+        cadence_override=cadence_override,
         status=status,
         amount=round(amount, 2),
         previous_amount=previous_amount,
@@ -303,6 +366,8 @@ def _build_item(
         is_manual=is_manual,
         is_tagged=is_tagged,
         rule_id=rule_id,
+        has_duplicates=has_duplicates,
+        duplicate_periods=duplicate_periods,
         recent_dates=[d.isoformat() for d in dates[-12:]],
         recent_amounts=[round(a, 2) for a in amounts[-12:]],
     )
@@ -346,9 +411,24 @@ def build_subscriptions_report(
     for key in alias_map:
         linked_children[_resolve_alias(key, alias_map)].append(key)
 
+    # Raw labels are tracked per pre-alias key so each linked child can be
+    # shown under its own most-common merchant name in the edit dialog.
     groups: dict[str, list[Transaction]] = defaultdict(list)
+    raw_labels: dict[str, Counter] = defaultdict(Counter)
     for tx in txs:
-        groups[_resolve_alias(normalize_merchant(tx), alias_map)].append(tx)
+        original = normalize_merchant(tx)
+        groups[_resolve_alias(original, alias_map)].append(tx)
+        raw_labels[original][
+            (tx.merchant_name or tx.description or tx.original_description or "").strip()
+        ] += 1
+
+    def _child_display(key: str) -> str:
+        # A linked key may have no transactions in the window; fall back to
+        # its own nickname, then the raw key.
+        if raw_labels.get(key):
+            return raw_labels[key].most_common(1)[0][0] or key
+        child_rule = rules.get(key)
+        return (child_rule.nickname if child_rule else None) or key
 
     # One Category lookup covers every group's dominant-category resolution.
     cat_ids = {tx.category_id for tx in txs if tx.category_id is not None}
@@ -365,15 +445,21 @@ def build_subscriptions_report(
     for merchant_key, group_txs in groups.items():
         rule = rules.get(merchant_key)
         nickname = rule.nickname if rule is not None else None
-        linked_keys = sorted(linked_children.get(merchant_key, []))
+        cadence_override = rule.cadence_override if rule is not None else None
+        linked_merchants = [
+            LinkedMerchantRead(key=k, display_name=_child_display(k))
+            for k in sorted(linked_children.get(merchant_key, []))
+        ]
         tagged_txs = [tx for tx in group_txs if tx.category_id in tagged_cat_ids]
         has_tagged = bool(tagged_txs)
 
         full = _analyze_group(merchant_key, group_txs, cat_names)
         occurrences = full.occurrences
-        # A lone charge is normally invisible to detection, but a tagged one
-        # was explicitly marked by the user and must still surface.
-        if len(occurrences) < 2 and not has_tagged:
+        # A lone charge is normally invisible to detection, but one the user
+        # tagged or manually included (e.g. a subscription's first charge)
+        # must still surface.
+        has_include = rule is not None and rule.rule == "include"
+        if len(occurrences) < 2 and not has_tagged and not has_include:
             continue
 
         cadence, amounts_ok = full.cadence, full.amounts_ok
@@ -386,28 +472,28 @@ def build_subscriptions_report(
             if detected:
                 dismissed.append(
                     _build_item(merchant_key, full, months, False, has_tagged, rule.id, today,
-                                nickname, linked_keys)
+                                nickname, linked_merchants, cadence_override)
                 )
             elif has_tagged:
                 # Tagged but undetected: still restorable from the dismissed list.
                 tagged_stats = _analyze_group(merchant_key, tagged_txs, cat_names)
                 dismissed.append(
                     _build_item(merchant_key, tagged_stats, months, False, True, rule.id, today,
-                                nickname, linked_keys)
+                                nickname, linked_merchants, cadence_override)
                 )
             continue
 
         if rule is not None and rule.rule == "include":
             subscriptions.append(
                 _build_item(merchant_key, full, months, True, has_tagged, rule.id, today,
-                            nickname, linked_keys)
+                            nickname, linked_merchants, cadence_override)
             )
             continue
 
         if detected:
             subscriptions.append(
                 _build_item(merchant_key, full, months, False, has_tagged, None, today,
-                            nickname, linked_keys)
+                            nickname, linked_merchants, cadence_override)
             )
         elif has_tagged:
             # Failed detection but the user tagged charges here: force the
@@ -416,7 +502,7 @@ def build_subscriptions_report(
             tagged_stats = _analyze_group(merchant_key, tagged_txs, cat_names)
             subscriptions.append(
                 _build_item(merchant_key, tagged_stats, months, False, True, None, today,
-                            nickname, linked_keys)
+                            nickname, linked_merchants, cadence_override)
             )
         elif len(occurrences) >= MIN_OCCURRENCES or (
             cadence in _SPARSE_CADENCES and len(occurrences) >= MIN_OCCURRENCES_SPARSE
@@ -474,15 +560,20 @@ def build_subscriptions_report(
     )
 
 
-# ─── User overrides (nicknames and linked merchants) ─────────────────────────
+# ─── User overrides (nicknames, cadence, and linked merchants) ───────────────
 #
 # All of these mutate SubscriptionRule rows. A row is kept only while it
-# carries something (rule, nickname, or alias_of); emptied rows are deleted
-# so stale merchant keys don't accumulate.
+# carries something (rule, nickname, alias_of, or cadence_override); emptied
+# rows are deleted so stale merchant keys don't accumulate.
 
 
 def _is_empty_rule(row: SubscriptionRule) -> bool:
-    return row.rule is None and row.nickname is None and row.alias_of is None
+    return (
+        row.rule is None
+        and row.nickname is None
+        and row.alias_of is None
+        and row.cadence_override is None
+    )
 
 
 def set_nickname(
@@ -506,6 +597,69 @@ def set_nickname(
         if _is_empty_rule(row):
             db.delete(row)
     db.commit()
+
+
+def set_cadence_override(
+    db: Session, user_id: int, merchant_key: str, cadence: Optional[str]
+) -> None:
+    """Set or clear (cadence=None) the forced billing cadence for a merchant."""
+    row = (
+        db.query(SubscriptionRule)
+        .filter(
+            SubscriptionRule.user_id == user_id,
+            SubscriptionRule.merchant_key == merchant_key,
+        )
+        .first()
+    )
+    if row is None:
+        if cadence is None:
+            return
+        db.add(SubscriptionRule(user_id=user_id, merchant_key=merchant_key, cadence_override=cadence))
+    else:
+        row.cadence_override = cadence
+        if _is_empty_rule(row):
+            db.delete(row)
+    db.commit()
+
+
+def create_manual_subscription(
+    db: Session, user_id: int, name: str, merchant_keys: list[str]
+) -> SubscriptionRule:
+    """Manually track a subscription built from the given merchant keys.
+
+    The first key becomes the canonical merchant: it gets an include rule
+    and the chosen name as its nickname, and is detached from any
+    subscription it was previously linked into. Remaining keys are linked
+    into it (which also clears their own include/exclude rules).
+    """
+    deduped: list[str] = []
+    for key in merchant_keys:
+        if key not in deduped:
+            deduped.append(key)
+    canonical, rest = deduped[0], deduped[1:]
+
+    row = (
+        db.query(SubscriptionRule)
+        .filter(
+            SubscriptionRule.user_id == user_id,
+            SubscriptionRule.merchant_key == canonical,
+        )
+        .first()
+    )
+    if row is None:
+        row = SubscriptionRule(user_id=user_id, merchant_key=canonical)
+        db.add(row)
+    row.rule = "include"
+    row.nickname = name
+    row.alias_of = None
+    # Committed before linking so link_merchants resolves the canonical key
+    # to itself as the root.
+    db.commit()
+
+    if rest:
+        link_merchants(db, user_id, canonical, rest)
+    db.refresh(row)
+    return row
 
 
 def link_merchants(

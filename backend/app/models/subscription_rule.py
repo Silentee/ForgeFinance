@@ -24,9 +24,11 @@ class SubscriptionRule(Base):
       flat at write time (never chains), and a linked key's own
       include/exclude is cleared since the canonical key's rule governs
       the merged group.
+    - cadence_override: user-forced billing cadence for the merchant,
+      replacing the inferred one in the report's math; NULL means infer.
 
-    A row may carry only a nickname or alias (rule=NULL); rows that end up
-    with none of the three are deleted.
+    A row may carry only a nickname, alias, or cadence override (rule=NULL);
+    rows that end up with none of them are deleted.
     """
     __tablename__ = "subscription_rules"
     __table_args__ = (
@@ -40,6 +42,7 @@ class SubscriptionRule(Base):
     rule: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)  # 'include' | 'exclude' | NULL
     nickname: Mapped[Optional[str]] = mapped_column(String(120), nullable=True)
     alias_of: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    cadence_override: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)  # cadence name | NULL
 
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

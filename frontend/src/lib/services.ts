@@ -11,6 +11,7 @@ import type {
   BudgetReport, NetWorthHistory, SpendingTrendsReport, SpendingAveragesReport, MonthlyTotalsReport, EquityHistoryReport,
   SubscriptionsReport, SubscriptionRule, SubscriptionRuleUpsert,
   SubscriptionNicknameUpsert, SubscriptionLinkRequest, SubscriptionUnlinkRequest,
+  SubscriptionCadenceUpsert, ManualSubscriptionCreate, MerchantKeyResolution,
   ImportSource, CSVImportResult, CSVColumnMapping,
   BalanceSnapshot, BalanceSnapshotUpdate,
 } from '@/types'
@@ -235,6 +236,15 @@ export const subscriptionsApi = {
 
   setNickname: (data: SubscriptionNicknameUpsert) =>
     apiClient.put('/subscriptions/nickname', data),
+
+  setCadence: (data: SubscriptionCadenceUpsert) =>
+    apiClient.put('/subscriptions/cadence', data),
+
+  createManual: (data: ManualSubscriptionCreate) =>
+    apiClient.post<SubscriptionRule>('/subscriptions/manual', data).then(r => r.data),
+
+  resolveKeys: (transaction_ids: number[]) =>
+    apiClient.post<MerchantKeyResolution[]>('/subscriptions/resolve-keys', { transaction_ids }).then(r => r.data),
 
   link: (data: SubscriptionLinkRequest) =>
     apiClient.post('/subscriptions/link', data),

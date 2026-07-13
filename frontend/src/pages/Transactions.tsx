@@ -1,6 +1,6 @@
 import { useState, useMemo, useEffect, useRef } from 'react'
 import { Link, useLocation } from 'react-router-dom'
-import { useTransactions, useAccounts, useCategories, useCreateTransaction, useUpdateTransaction, useDeleteTransaction } from '@/hooks'
+import { useTransactions, useAccounts, useCategories, useCreateTransaction, useUpdateTransaction, useDeleteTransaction, useDebouncedValue } from '@/hooks'
 import { Card, PageHeader, Button, EmptyState, Spinner, Modal, FilterDropdown, CheckboxRow } from '@/components/ui'
 import { formatCurrency, formatDate, toLocalDateString, todayLocal, sortBySortOrder } from '@/lib/format'
 import type { Transaction, TransactionUpdate, TransactionCreate, TransactionType, Category } from '@/types'
@@ -372,17 +372,6 @@ function AddTransactionModal({ accounts, categories, onClose }: {
       </form>
     </Modal>
   )
-}
-
-// Debounce a rapidly-changing value (e.g. the search box) so it only drives a
-// query after the user pauses typing.
-function useDebouncedValue<T>(value: T, delayMs: number): T {
-  const [debounced, setDebounced] = useState(value)
-  useEffect(() => {
-    const id = setTimeout(() => setDebounced(value), delayMs)
-    return () => clearTimeout(id)
-  }, [value, delayMs])
-  return debounced
 }
 
 export default function TransactionsPage() {

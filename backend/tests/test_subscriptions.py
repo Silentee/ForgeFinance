@@ -6,9 +6,11 @@ from app.models import Account, Category, SubscriptionRule, Transaction, User
 from app.models.enums import TransactionType
 from app.services.subscriptions import (
     build_subscriptions_report,
+    create_manual_subscription,
     link_merchants,
     normalize_merchant,
     remove_rule,
+    set_cadence_override,
     set_nickname,
     unlink_merchant,
 )
@@ -420,7 +422,7 @@ def test_link_merges_charge_series(db):
     assert item.merchant_key == new_key
     assert item.cadence == "monthly"
     assert item.occurrence_count == 4
-    assert item.linked_keys == [old_key]
+    assert [m.key for m in item.linked_merchants] == [old_key]
     # Detection passed on the merged series alone — no include rule involved.
     assert item.is_manual is False
     assert item.rule_id is None
@@ -563,3 +565,241 @@ def test_remove_rule_deletes_bare_row(db):
     assert remove_rule(db, user.id, rule.id) is True
     assert db.query(SubscriptionRule).count() == 0
     assert remove_rule(db, user.id, 9999) is False
+
+
+def test_linked_merchants_carry_display_names(db):
+    acct, cat, user = _setup(db)
+    old_key, new_key = _drifted_merchant(db, acct, cat)
+    db.commit()
+
+    link_merchants(db, user.id, new_key, [old_key])
+    report = build_subscriptions_report(db, user.id)
+
+    item = report.subscriptions[0]
+    assert len(item.linked_merchants) == 1
+    assert item.linked_merchants[0].key == old_key
+    assert item.linked_merchants[0].display_name == "Old Streaming Co"
+
+
+# ── Manual subscriptions ──────────────────────────────────────────────────────
+
+
+def test_manual_subscription_links_and_names(db):
+    acct, cat, user = _setup(db)
+    old_key, new_key = _drifted_merchant(db, acct, cat)
+    db.commit()
+
+    create_manual_subscription(db, user.id, "My Bundle", [new_key, old_key])
+    report = build_subscriptions_report(db, user.id)
+
+    assert len(report.subscriptions) == 1
+    item = report.subscriptions[0]
+    assert item.merchant_key == new_key
+    assert item.nickname == "My Bundle"
+    assert item.is_manual is True
+    assert [m.key for m in item.linked_merchants] == [old_key]
+    assert item.occurrence_count == 4
+    assert report.candidates == []
+
+
+def test_manual_subscription_single_charge(db):
+    acct, cat, user = _setup(db)
+    tx = _tx(db, acct, cat, 49.0, TransactionType.DEBIT, _days_ago(10), desc="New Service")
+    db.commit()
+    key = normalize_merchant(tx)
+
+    # Untracked, a lone untagged charge is invisible.
+    assert build_subscriptions_report(db, user.id).subscriptions == []
+
+    create_manual_subscription(db, user.id, "New Service", [key])
+    report = build_subscriptions_report(db, user.id)
+
+    assert len(report.subscriptions) == 1
+    item = report.subscriptions[0]
+    assert item.is_manual is True
+    assert item.occurrence_count == 1
+    assert item.cadence == "irregular"
+
+
+def test_manual_subscription_dedupes_keys(db):
+    _, _, user = _setup(db)
+    db.commit()
+
+    # A repeated key must not trip link_merchants' self-link guard.
+    row = create_manual_subscription(db, user.id, "Dup", ["spotify", "spotify"])
+
+    assert row.merchant_key == "spotify"
+    assert row.rule == "include"
+    assert db.query(SubscriptionRule).count() == 1
+
+
+def test_manual_subscription_steals_linked_merchant(db):
+    acct, cat, user = _setup(db)
+    old_key, new_key = _drifted_merchant(db, acct, cat)
+    db.commit()
+    link_merchants(db, user.id, new_key, [old_key])
+
+    # Making the linked child its own manual subscription detaches it.
+    create_manual_subscription(db, user.id, "Old One", [old_key])
+
+    row = db.query(SubscriptionRule).filter_by(merchant_key=old_key).one()
+    assert row.alias_of is None
+    assert row.rule == "include"
+    assert row.nickname == "Old One"
+    keys = {s.merchant_key for s in build_subscriptions_report(db, user.id).subscriptions}
+    assert old_key in keys
+
+
+# ── Cadence overrides ─────────────────────────────────────────────────────────
+
+
+def test_cadence_override_math(db):
+    acct, cat, user = _setup(db)
+    # Gaps of 20, 45, and 70 days — no cadence bucket matches
+    for days in (135, 115, 70, 0):
+        _tx(db, acct, cat, 25.0, TransactionType.DEBIT, _days_ago(days), desc="Odd Charge")
+    db.flush()
+    key = normalize_merchant(db.query(Transaction).first())
+    db.add(SubscriptionRule(user_id=user.id, merchant_key=key, rule="include"))
+    db.commit()
+    set_cadence_override(db, user.id, key, "monthly")
+
+    report = build_subscriptions_report(db, user.id)
+
+    item = report.subscriptions[0]
+    assert item.cadence == "monthly"
+    assert item.cadence_override == "monthly"
+    assert item.monthly_equivalent == 25.0
+    assert item.annual_equivalent == 300.0
+    # Next-expected uses the nominal cadence length, not the observed median.
+    assert item.next_expected == (date.today() + timedelta(days=30)).isoformat()
+
+
+def test_cadence_override_lapse_uses_nominal_interval(db):
+    acct, cat, user = _setup(db)
+    # Quarterly-looking series whose last charge was 60 days ago.
+    for days in (240, 150, 60):
+        _tx(db, acct, cat, 30.0, TransactionType.DEBIT, _days_ago(days), desc="Box Club")
+    db.flush()
+    key = normalize_merchant(db.query(Transaction).first())
+    db.commit()
+
+    set_cadence_override(db, user.id, key, "monthly")
+    report = build_subscriptions_report(db, user.id)
+    # 60 days without a charge is lapsed for a monthly subscription...
+    assert report.subscriptions[0].status == "lapsed"
+
+    set_cadence_override(db, user.id, key, "annual")
+    report = build_subscriptions_report(db, user.id)
+    # ...but well within an annual one.
+    assert report.subscriptions[0].status == "active"
+    assert report.subscriptions[0].monthly_equivalent == 2.5
+
+
+def test_cadence_override_does_not_promote_candidate(db):
+    acct, cat, user = _setup(db)
+    for days in (135, 115, 70, 0):
+        _tx(db, acct, cat, 25.0, TransactionType.DEBIT, _days_ago(days), desc="Odd Charge")
+    db.flush()
+    key = normalize_merchant(db.query(Transaction).first())
+    db.commit()
+    set_cadence_override(db, user.id, key, "monthly")
+
+    report = build_subscriptions_report(db, user.id)
+
+    # Detection status is unchanged: an override alone doesn't force-track.
+    assert report.subscriptions == []
+    assert {c.merchant_key for c in report.candidates} == {key}
+
+
+def test_clear_cadence_override_deletes_bare_row(db):
+    _, _, user = _setup(db)
+    db.commit()
+
+    set_cadence_override(db, user.id, "spotify", "monthly")
+    assert db.query(SubscriptionRule).count() == 1
+
+    set_cadence_override(db, user.id, "spotify", None)
+    assert db.query(SubscriptionRule).count() == 0
+
+
+def test_remove_rule_keeps_cadence_override(db):
+    _, _, user = _setup(db)
+    rule = SubscriptionRule(
+        user_id=user.id, merchant_key="spotify", rule="include", cadence_override="monthly"
+    )
+    db.add(rule)
+    db.commit()
+
+    assert remove_rule(db, user.id, rule.id) is True
+    row = db.query(SubscriptionRule).filter_by(merchant_key="spotify").one()
+    assert row.rule is None
+    assert row.cadence_override == "monthly"
+
+
+# ── Duplicate-charge detection ────────────────────────────────────────────────
+
+
+def test_duplicate_two_charges_in_one_month(db):
+    acct, subs, user = _setup(db)
+    for i in range(6):
+        _tx(db, acct, subs, 15.99, TransactionType.DEBIT, _days_ago(30 * i))
+    # Extra charge halfway through the latest cycle: two in one calendar month.
+    _tx(db, acct, subs, 15.99, TransactionType.DEBIT, _days_ago(15))
+    db.commit()
+
+    report = build_subscriptions_report(db, user.id)
+
+    item = report.subscriptions[0]
+    assert item.cadence == "monthly"
+    assert item.has_duplicates is True
+    assert len(item.duplicate_periods) >= 1
+    # Flag only: the cost math is unaffected by the duplicate.
+    assert item.monthly_equivalent == 15.99
+
+
+def test_duplicate_same_day_charges_detected(db):
+    acct, subs, user = _setup(db)
+    for i in range(1, 6):
+        _tx(db, acct, subs, 15.99, TransactionType.DEBIT, _days_ago(30 * i))
+    # Double-charged on the same day: collapsed into one occurrence, but
+    # still a duplicate.
+    double_day = _days_ago(0)
+    _tx(db, acct, subs, 15.99, TransactionType.DEBIT, double_day)
+    _tx(db, acct, subs, 15.99, TransactionType.DEBIT, double_day)
+    db.commit()
+
+    report = build_subscriptions_report(db, user.id)
+
+    item = report.subscriptions[0]
+    assert item.has_duplicates is True
+    assert f"{double_day.year}-{double_day.month:02d}" in item.duplicate_periods
+
+
+def test_weekly_close_gap_flagged(db):
+    acct, subs, user = _setup(db)
+    for i in range(7, 0, -1):
+        _tx(db, acct, subs, 5.99, TransactionType.DEBIT, _days_ago(7 * i))
+    # Two days after the last regular charge — under half the weekly interval.
+    _tx(db, acct, subs, 5.99, TransactionType.DEBIT, _days_ago(5))
+    db.commit()
+
+    report = build_subscriptions_report(db, user.id)
+
+    item = report.subscriptions[0]
+    assert item.cadence == "weekly"
+    assert item.has_duplicates is True
+    assert item.duplicate_periods == [_days_ago(5).isoformat()]
+
+
+def test_regular_series_not_flagged(db):
+    acct, subs, user = _setup(db)
+    for i in range(6):
+        _tx(db, acct, subs, 15.99, TransactionType.DEBIT, _days_ago(30 * i))
+    db.commit()
+
+    report = build_subscriptions_report(db, user.id)
+
+    item = report.subscriptions[0]
+    assert item.has_duplicates is False
+    assert item.duplicate_periods == []

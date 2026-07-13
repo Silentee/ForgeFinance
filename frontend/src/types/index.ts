@@ -366,12 +366,21 @@ export type SubscriptionCadence =
   | 'annual'
   | 'irregular'
 
+// Settable as an override; 'irregular' is only ever derived, never forced.
+export type SubscriptionCadenceOverride = Exclude<SubscriptionCadence, 'irregular'>
+
+export interface LinkedMerchant {
+  key: string
+  display_name: string
+}
+
 export interface SubscriptionItem {
   merchant_key: string
   display_name: string
   nickname?: string
-  linked_keys: string[]
+  linked_merchants: LinkedMerchant[]
   cadence: SubscriptionCadence
+  cadence_override?: SubscriptionCadenceOverride
   status: 'active' | 'lapsed'
   amount: number
   previous_amount?: number
@@ -389,6 +398,8 @@ export interface SubscriptionItem {
   is_manual: boolean
   is_tagged: boolean
   rule_id?: number
+  has_duplicates: boolean
+  duplicate_periods: string[]
   recent_dates: string[]
   recent_amounts: number[]
 }
@@ -423,6 +434,7 @@ export interface SubscriptionRule {
   rule?: 'include' | 'exclude'
   nickname?: string
   alias_of?: string
+  cadence_override?: SubscriptionCadenceOverride
 }
 
 export interface SubscriptionRuleUpsert {
@@ -441,6 +453,21 @@ export interface SubscriptionLinkRequest {
 }
 
 export interface SubscriptionUnlinkRequest {
+  merchant_key: string
+}
+
+export interface SubscriptionCadenceUpsert {
+  merchant_key: string
+  cadence?: SubscriptionCadenceOverride
+}
+
+export interface ManualSubscriptionCreate {
+  name: string
+  merchant_keys: string[]
+}
+
+export interface MerchantKeyResolution {
+  transaction_id: number
   merchant_key: string
 }
 

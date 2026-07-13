@@ -8,14 +8,22 @@ from typing import Literal, Optional
 from pydantic import BaseModel, field_validator, model_validator
 
 Cadence = Literal["weekly", "biweekly", "monthly", "quarterly", "semiannual", "annual", "irregular"]
+# Settable as an override; "irregular" is only ever derived, never forced.
+CadenceOverride = Literal["weekly", "biweekly", "monthly", "quarterly", "semiannual", "annual"]
+
+
+class LinkedMerchantRead(BaseModel):
+    key: str                             # normalized merchant key
+    display_name: str                    # most-common raw name for that key
 
 
 class SubscriptionItem(BaseModel):
     merchant_key: str
     display_name: str                    # derived most-common raw name
     nickname: Optional[str] = None       # user-chosen name; display this when set
-    linked_keys: list[str] = []          # merchant keys merged into this row
+    linked_merchants: list[LinkedMerchantRead] = []  # merchants merged into this row
     cadence: Cadence
+    cadence_override: Optional[CadenceOverride] = None  # set when cadence was user-forced
     status: Literal["active", "lapsed"]
     amount: float                        # latest charge
     previous_amount: Optional[float] = None
@@ -33,6 +41,8 @@ class SubscriptionItem(BaseModel):
     is_manual: bool = False              # forced in by an 'include' rule
     is_tagged: bool = False              # has transactions categorized as 'Subscriptions'
     rule_id: Optional[int] = None        # set when an include/exclude rule exists
+    has_duplicates: bool = False         # charged more often than the cadence implies
+    duplicate_periods: list[str] = []    # periods with 2+ charges ("2026-05", "2026-Q2", ISO dates)
     recent_dates: list[str] = []         # last <=12 occurrences, oldest -> newest
     recent_amounts: list[float] = []
 
@@ -119,11 +129,61 @@ class SubscriptionUnlinkRequest(BaseModel):
     merchant_key_not_empty = field_validator("merchant_key")(_require_merchant_key)
 
 
+class SubscriptionCadenceUpsert(BaseModel):
+    merchant_key: str
+    cadence: Optional[CadenceOverride] = None  # None clears the override
+
+    merchant_key_not_empty = field_validator("merchant_key")(_require_merchant_key)
+
+
+class ManualSubscriptionCreate(BaseModel):
+    """Manually track a subscription: name it and attach merchant keys.
+
+    The first key becomes the canonical merchant (include rule + nickname);
+    the rest are linked into it.
+    """
+    name: str
+    merchant_keys: list[str]
+
+    @field_validator("name")
+    @classmethod
+    def name_not_empty(cls, v: str) -> str:
+        v = v.strip()
+        if not v:
+            raise ValueError("name must not be empty")
+        return v[:120]  # nickname column width
+
+    @field_validator("merchant_keys")
+    @classmethod
+    def keys_not_empty(cls, v: list[str]) -> list[str]:
+        v = [_require_merchant_key(k) for k in v]
+        if not v:
+            raise ValueError("merchant_keys must not be empty")
+        return v
+
+
+class MerchantKeyResolveRequest(BaseModel):
+    transaction_ids: list[int]
+
+    @field_validator("transaction_ids")
+    @classmethod
+    def ids_not_empty(cls, v: list[int]) -> list[int]:
+        if not v:
+            raise ValueError("transaction_ids must not be empty")
+        return v
+
+
+class MerchantKeyResolution(BaseModel):
+    transaction_id: int
+    merchant_key: str
+
+
 class SubscriptionRuleRead(BaseModel):
     id: int
     merchant_key: str
     rule: Optional[Literal["include", "exclude"]] = None
     nickname: Optional[str] = None
     alias_of: Optional[str] = None
+    cadence_override: Optional[CadenceOverride] = None
 
     model_config = {"from_attributes": True}

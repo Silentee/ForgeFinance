@@ -1,10 +1,21 @@
-import { useMemo } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useQuery, useInfiniteQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { accountsApi, accountTypesApi, balancesApi, transactionsApi, categoriesApi, budgetsApi, reportsApi, subscriptionsApi, importsApi, institutionsApi, demoApi, authApi, type TransactionFilters } from '@/lib/services'
 import { getToken } from '@/lib/api'
-import type { AccountCreate, AccountUpdate, AccountTypeCreate, AccountTypeUpdate, AccountTypeDef, BudgetCreate, BudgetUpdate, TransactionUpdate, TransactionCreate, CategoryCreate, CategoryUpdate, CSVColumnMapping, BalanceSnapshotUpdate, SubscriptionRuleUpsert, SubscriptionNicknameUpsert, SubscriptionLinkRequest, SubscriptionUnlinkRequest } from '@/types'
+import type { AccountCreate, AccountUpdate, AccountTypeCreate, AccountTypeUpdate, AccountTypeDef, BudgetCreate, BudgetUpdate, TransactionUpdate, TransactionCreate, CategoryCreate, CategoryUpdate, CSVColumnMapping, BalanceSnapshotUpdate, SubscriptionRuleUpsert, SubscriptionNicknameUpsert, SubscriptionLinkRequest, SubscriptionUnlinkRequest, SubscriptionCadenceUpsert, ManualSubscriptionCreate } from '@/types'
 import { formatAccountType } from '@/lib/format'
 import toast from 'react-hot-toast'
+
+// Debounce a rapidly-changing value (e.g. a search box) so it only drives a
+// query after the user pauses typing.
+export function useDebouncedValue<T>(value: T, delayMs: number): T {
+  const [debounced, setDebounced] = useState(value)
+  useEffect(() => {
+    const id = setTimeout(() => setDebounced(value), delayMs)
+    return () => clearTimeout(id)
+  }, [value, delayMs])
+  return debounced
+}
 
 // ─── Query key factory (centralised, avoids magic strings) ───────────────────
 
@@ -486,6 +497,38 @@ export function useSetSubscriptionNickname() {
       toast.success(nickname ? 'Nickname saved' : 'Nickname cleared')
     },
     onError: (e: Error) => toast.error(e.message),
+  })
+}
+
+export function useSetSubscriptionCadence() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (data: SubscriptionCadenceUpsert) => subscriptionsApi.setCadence(data),
+    onSuccess: (_, { cadence }) => {
+      qc.invalidateQueries({ queryKey: ['reports'] })
+      toast.success(cadence ? 'Cadence updated' : 'Cadence reset to auto')
+    },
+    onError: (e: Error) => toast.error(e.message),
+  })
+}
+
+export function useCreateManualSubscription() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (data: ManualSubscriptionCreate) => subscriptionsApi.createManual(data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['reports'] })
+      toast.success('Subscription added')
+    },
+    onError: (e: Error) => toast.error(e.message),
+  })
+}
+
+export function useResolveMerchantKeys(transactionIds: number[]) {
+  return useQuery({
+    queryKey: ['subscriptions', 'resolve-keys', [...transactionIds].sort((a, b) => a - b)],
+    queryFn: () => subscriptionsApi.resolveKeys(transactionIds),
+    enabled: transactionIds.length > 0,
   })
 }
 
