@@ -4,14 +4,16 @@ import NetWorthTab from './reports/NetWorthTab'
 import CashFlowTab from './reports/CashFlowTab'
 import SpendingTab from './reports/SpendingTab'
 import EmergencyFundTab from './reports/EmergencyFundTab'
+import SubscriptionsTab from './reports/SubscriptionsTab'
 
-type ReportTab = 'spending' | 'net-worth' | 'cash-flow' | 'emergency-fund'
+type ReportTab = 'spending' | 'net-worth' | 'cash-flow' | 'emergency-fund' | 'subscriptions'
 
 const REPORT_TITLES: Record<ReportTab, string> = {
   'net-worth': 'Net Worth & Equity',
   'cash-flow': 'Cash Flow',
   'spending': 'Spending',
   'emergency-fund': 'Emergency Fund',
+  'subscriptions': 'Subscriptions',
 }
 
 export default function ReportsPage() {
@@ -29,6 +31,7 @@ export default function ReportsPage() {
       {activeTab === 'cash-flow' && <CashFlowTab />}
       {activeTab === 'spending' && <SpendingTab />}
       {activeTab === 'emergency-fund' && <EmergencyFundTab />}
+      {activeTab === 'subscriptions' && <SubscriptionsTab />}
     </div>
   )
 }

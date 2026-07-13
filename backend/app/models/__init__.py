@@ -18,6 +18,7 @@ from app.models.balance import BalanceSnapshot, ImportSource
 from app.models.transaction import Transaction
 from app.models.budget import Budget
 from app.models.budget_visibility import BudgetVisibleCategories
+from app.models.subscription_rule import SubscriptionRule
 from app.models.user import User
 
 __all__ = [
@@ -26,5 +27,6 @@ __all__ = [
     "Category", "DEFAULT_CATEGORIES",
     "BalanceSnapshot", "ImportSource", "Transaction", "Budget",
     "BudgetVisibleCategories",
+    "SubscriptionRule",
     "User",
 ]

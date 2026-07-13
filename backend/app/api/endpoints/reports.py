@@ -11,7 +11,9 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
+from app.api.deps import get_current_user
 from app.db.session import get_db
+from app.models.user import User
 from app.schemas.reports import (
     BudgetReport,
     EquityHistoryReport,
@@ -20,6 +22,7 @@ from app.schemas.reports import (
     SpendingAveragesReport,
     SpendingTrendsReport,
 )
+from app.schemas.subscriptions import SubscriptionsReport
 from app.services.reporting import (
     build_budget_report,
     build_equity_history,
@@ -28,6 +31,7 @@ from app.services.reporting import (
     build_spending_averages,
     build_spending_trends,
 )
+from app.services.subscriptions import build_subscriptions_report
 
 router = APIRouter()
 
@@ -166,6 +170,33 @@ def get_equity_history(
     Useful for tracking home equity, car equity, etc.
     """
     return build_equity_history(db, months)
+
+
+@router.get("/subscriptions", response_model=SubscriptionsReport)
+def get_subscriptions_report(
+    months: int = Query(24, ge=6, le=60, description="Lookback window in months"),
+    account_ids: Optional[str] = Query(None, description="Comma-separated account IDs"),
+    tagged_only: bool = Query(
+        False, description="Only transactions categorized as 'Subscriptions'"
+    ),
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """
+    Recurring charges detected from transaction history.
+
+    Groups debits by a normalized merchant key and looks for a regular
+    cadence (weekly through annual) with similar amounts. Returns detected
+    subscriptions with cadence, status (active/lapsed), price-increase flags,
+    and monthly-equivalent cost, plus dismissed merchants and near-miss
+    candidates the user can choose to track. Per-merchant overrides are
+    managed via /subscriptions/rules.
+
+    Transactions categorized as 'Subscriptions' are always included (even a
+    single one-off charge); tagged_only restricts the report to just those.
+    """
+    account_id_list = _parse_account_ids(account_ids)
+    return build_subscriptions_report(db, user.id, months, account_id_list, tagged_only)
 
 
 # ---------------------------------------------------------------------------

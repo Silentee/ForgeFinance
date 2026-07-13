@@ -355,6 +355,95 @@ export interface SpendingAveragesReport {
   total_expense_avg_12m: number
 }
 
+// ─── Subscriptions ───────────────────────────────────────────────────────────
+
+export type SubscriptionCadence =
+  | 'weekly'
+  | 'biweekly'
+  | 'monthly'
+  | 'quarterly'
+  | 'semiannual'
+  | 'annual'
+  | 'irregular'
+
+export interface SubscriptionItem {
+  merchant_key: string
+  display_name: string
+  nickname?: string
+  linked_keys: string[]
+  cadence: SubscriptionCadence
+  status: 'active' | 'lapsed'
+  amount: number
+  previous_amount?: number
+  price_increased: boolean
+  price_change_pct?: number
+  first_charged: string
+  last_charged: string
+  next_expected?: string
+  occurrence_count: number
+  monthly_equivalent: number
+  annual_equivalent: number
+  total_in_window: number
+  category_id?: number
+  category_name?: string
+  is_manual: boolean
+  is_tagged: boolean
+  rule_id?: number
+  recent_dates: string[]
+  recent_amounts: number[]
+}
+
+export interface SubscriptionCandidate {
+  merchant_key: string
+  display_name: string
+  nickname?: string
+  occurrence_count: number
+  last_charged: string
+  median_amount: number
+  category_id?: number
+  category_name?: string
+  reason: 'irregular_cadence' | 'amount_varies' | 'too_few_occurrences'
+}
+
+export interface SubscriptionsReport {
+  months: number
+  total_monthly: number
+  total_annual: number
+  active_count: number
+  lapsed_count: number
+  price_increase_count: number
+  subscriptions: SubscriptionItem[]
+  dismissed: SubscriptionItem[]
+  candidates: SubscriptionCandidate[]
+}
+
+export interface SubscriptionRule {
+  id: number
+  merchant_key: string
+  rule?: 'include' | 'exclude'
+  nickname?: string
+  alias_of?: string
+}
+
+export interface SubscriptionRuleUpsert {
+  merchant_key: string
+  rule: 'include' | 'exclude'
+}
+
+export interface SubscriptionNicknameUpsert {
+  merchant_key: string
+  nickname?: string
+}
+
+export interface SubscriptionLinkRequest {
+  target_key: string
+  merchant_keys: string[]
+}
+
+export interface SubscriptionUnlinkRequest {
+  merchant_key: string
+}
+
 // ─── Equity History ──────────────────────────────────────────────────────────
 
 export interface EquityDataPoint {

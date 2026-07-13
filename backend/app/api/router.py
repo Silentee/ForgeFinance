@@ -12,6 +12,7 @@ from app.api.endpoints import (
     categories,
     budgets,
     reports,
+    subscriptions,
     demo,
     export,
 )
@@ -32,6 +33,7 @@ protected.include_router(balances.router,     prefix="/balances",     tags=["Bal
 protected.include_router(categories.router,   prefix="/categories",   tags=["Categories"])
 protected.include_router(budgets.router,      prefix="/budgets",      tags=["Budgets"])
 protected.include_router(reports.router,      prefix="/reports",      tags=["Reports"])
+protected.include_router(subscriptions.router, prefix="/subscriptions", tags=["Subscriptions"])
 protected.include_router(demo.router,         prefix="/demo",         tags=["Demo"])
 protected.include_router(export.router,       prefix="/export",       tags=["Export"])
 

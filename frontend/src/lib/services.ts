@@ -9,6 +9,8 @@ import type {
   Budget, BudgetCreate, BudgetUpdate,
   BudgetVisibleCategories, BudgetVisibleCategoriesUpsert,
   BudgetReport, NetWorthHistory, SpendingTrendsReport, SpendingAveragesReport, MonthlyTotalsReport, EquityHistoryReport,
+  SubscriptionsReport, SubscriptionRule, SubscriptionRuleUpsert,
+  SubscriptionNicknameUpsert, SubscriptionLinkRequest, SubscriptionUnlinkRequest,
   ImportSource, CSVImportResult, CSVColumnMapping,
   BalanceSnapshot, BalanceSnapshotUpdate,
 } from '@/types'
@@ -214,6 +216,31 @@ export const reportsApi = {
 
   equityHistory: (months?: number) =>
     apiClient.get<EquityHistoryReport>('/reports/equity/history', { params: { months } }).then(r => r.data),
+
+  subscriptions: (params?: { months?: number; account_ids?: string; tagged_only?: boolean }) =>
+    apiClient.get<SubscriptionsReport>('/reports/subscriptions', { params }).then(r => r.data),
+}
+
+// ─── Subscription rules ───────────────────────────────────────────────────────
+
+export const subscriptionsApi = {
+  listRules: () =>
+    apiClient.get<SubscriptionRule[]>('/subscriptions/rules').then(r => r.data),
+
+  upsertRule: (data: SubscriptionRuleUpsert) =>
+    apiClient.put<SubscriptionRule>('/subscriptions/rules', data).then(r => r.data),
+
+  deleteRule: (id: number) =>
+    apiClient.delete(`/subscriptions/rules/${id}`),
+
+  setNickname: (data: SubscriptionNicknameUpsert) =>
+    apiClient.put('/subscriptions/nickname', data),
+
+  link: (data: SubscriptionLinkRequest) =>
+    apiClient.post('/subscriptions/link', data),
+
+  unlink: (data: SubscriptionUnlinkRequest) =>
+    apiClient.post('/subscriptions/unlink', data),
 }
 
 // ─── CSV Import ───────────────────────────────────────────────────────────────

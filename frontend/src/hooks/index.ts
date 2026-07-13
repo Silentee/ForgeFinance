@@ -1,8 +1,8 @@
 import { useMemo } from 'react'
 import { useQuery, useInfiniteQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { accountsApi, accountTypesApi, balancesApi, transactionsApi, categoriesApi, budgetsApi, reportsApi, importsApi, institutionsApi, demoApi, authApi, type TransactionFilters } from '@/lib/services'
+import { accountsApi, accountTypesApi, balancesApi, transactionsApi, categoriesApi, budgetsApi, reportsApi, subscriptionsApi, importsApi, institutionsApi, demoApi, authApi, type TransactionFilters } from '@/lib/services'
 import { getToken } from '@/lib/api'
-import type { AccountCreate, AccountUpdate, AccountTypeCreate, AccountTypeUpdate, AccountTypeDef, BudgetCreate, BudgetUpdate, TransactionUpdate, TransactionCreate, CategoryCreate, CategoryUpdate, CSVColumnMapping, BalanceSnapshotUpdate } from '@/types'
+import type { AccountCreate, AccountUpdate, AccountTypeCreate, AccountTypeUpdate, AccountTypeDef, BudgetCreate, BudgetUpdate, TransactionUpdate, TransactionCreate, CategoryCreate, CategoryUpdate, CSVColumnMapping, BalanceSnapshotUpdate, SubscriptionRuleUpsert, SubscriptionNicknameUpsert, SubscriptionLinkRequest, SubscriptionUnlinkRequest } from '@/types'
 import { formatAccountType } from '@/lib/format'
 import toast from 'react-hot-toast'
 
@@ -24,6 +24,7 @@ export const QK = {
   reportTrends:  (params?: object) => ['reports', 'trends', params] as const,
   reportSpendingAverages: (year: number, month: number) => ['reports', 'spending-averages', year, month] as const,
   reportMonthlyTotals: (params?: object) => ['reports', 'monthly-totals', params] as const,
+  reportSubscriptions: (params?: object) => ['reports', 'subscriptions', params] as const,
   imports:       (accountId?: number) => ['imports', accountId] as const,
 }
 
@@ -440,6 +441,75 @@ export function useEquityHistory(months = 24) {
   return useQuery({
     queryKey: ['reports', 'equity', months],
     queryFn: () => reportsApi.equityHistory(months),
+  })
+}
+
+// ─── Subscriptions ────────────────────────────────────────────────────────────
+
+export function useSubscriptionsReport(params?: { months?: number; tagged_only?: boolean }) {
+  return useQuery({
+    queryKey: QK.reportSubscriptions(params),
+    queryFn: () => reportsApi.subscriptions(params),
+  })
+}
+
+export function useUpsertSubscriptionRule() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (data: SubscriptionRuleUpsert) => subscriptionsApi.upsertRule(data),
+    onSuccess: (_, { rule }) => {
+      qc.invalidateQueries({ queryKey: ['reports'] })
+      toast.success(rule === 'exclude' ? 'Subscription dismissed' : 'Subscription tracked')
+    },
+    onError: (e: Error) => toast.error(e.message),
+  })
+}
+
+export function useDeleteSubscriptionRule() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: number) => subscriptionsApi.deleteRule(id),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['reports'] })
+      toast.success('Subscription override removed')
+    },
+    onError: (e: Error) => toast.error(e.message),
+  })
+}
+
+export function useSetSubscriptionNickname() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (data: SubscriptionNicknameUpsert) => subscriptionsApi.setNickname(data),
+    onSuccess: (_, { nickname }) => {
+      qc.invalidateQueries({ queryKey: ['reports'] })
+      toast.success(nickname ? 'Nickname saved' : 'Nickname cleared')
+    },
+    onError: (e: Error) => toast.error(e.message),
+  })
+}
+
+export function useLinkSubscriptions() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (data: SubscriptionLinkRequest) => subscriptionsApi.link(data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['reports'] })
+      toast.success('Subscriptions linked')
+    },
+    onError: (e: Error) => toast.error(e.message),
+  })
+}
+
+export function useUnlinkSubscription() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (data: SubscriptionUnlinkRequest) => subscriptionsApi.unlink(data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['reports'] })
+      toast.success('Subscription unlinked')
+    },
+    onError: (e: Error) => toast.error(e.message),
   })
 }
 

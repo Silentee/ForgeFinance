@@ -20,3 +20,8 @@ from app.schemas.reports import (
     SpendingTrendsReport, CategoryTrendSeries,
 )
 from app.schemas.budget_visibility import BudgetVisibleCategoriesRead, BudgetVisibleCategoriesUpsert
+from app.schemas.subscriptions import (
+    SubscriptionItem, SubscriptionCandidate, SubscriptionsReport,
+    SubscriptionRuleUpsert, SubscriptionRuleRead,
+    SubscriptionNicknameUpsert, SubscriptionLinkRequest, SubscriptionUnlinkRequest,
+)
