@@ -4,6 +4,9 @@ A personal finance app for tracking income, spending, investments, debt, and net
 Runs entirely on your local network — your data never leaves your machines.
 
 ---
+<img width="1896" height="837" alt="image" src="https://github.com/user-attachments/assets/b8ff8ea2-bfea-449a-a2fc-69b464a06ab9" />
+
+---
 
 ## Prerequisites
 
@@ -73,74 +76,7 @@ To stop the app, close both terminal windows.
 
 Forge Finance can be self-hosted on another machine on your local network (e.g., a Raspberry Pi, home server, or always-on PC). There are two deployment modes:
 
-### Mode 1: Backend Only (Remote Backend, Local Frontend)
-
-Run the backend on a server while running the frontend on your local machine. This is useful when you want the database on a central server but prefer the faster development experience of running the frontend locally.
-
-#### On the Server (e.g., 192.168.1.100)
-
-1. Clone/copy the project to the server
-
-2. Edit `backend/start.bat` (Windows) or `backend/start.sh` (Linux/Mac) to bind to all network interfaces:
-
-   Change:
-   ```
-   --host 127.0.0.1
-   ```
-   To:
-   ```
-   --host 0.0.0.0
-   ```
-
-3. Add your local machine's origin to CORS. Edit `backend/app/core/config.py`:
-   ```python
-   cors_origins: list[str] = [
-       "http://localhost:5173",
-       "http://localhost:3000",
-       "http://localhost:8080",
-       "http://192.168.1.50:5173",  # Add your local machine's IP
-   ]
-   ```
-
-4. Start the backend:
-   ```bash
-   cd backend
-   ./start.sh   # or start.bat on Windows
-   ```
-
-5. Verify the API is accessible from your local machine:
-   ```
-   http://192.168.1.100:8000/docs
-   ```
-
-#### On Your Local Machine
-
-1. Set the API URL environment variable before starting the frontend:
-
-   **Windows (cmd):**
-   ```cmd
-   set VITE_API_BASE_URL=http://192.168.1.100:8000
-   cd frontend
-   start.bat
-   ```
-
-   **Windows (PowerShell):**
-   ```powershell
-   $env:VITE_API_BASE_URL = "http://192.168.1.100:8000"
-   cd frontend
-   .\start.bat
-   ```
-
-   **Mac / Linux:**
-   ```bash
-   VITE_API_BASE_URL=http://192.168.1.100:8000 ./start.sh
-   ```
-
-2. Open http://localhost:5173
-
----
-
-### Mode 2: Full Stack (Both Backend and Frontend on Server)
+### Mode 1: Full Stack - Direct Hosting
 
 Run both the backend and frontend on a server, accessing it from any device on your network.
 
@@ -210,7 +146,7 @@ Replace `192.168.1.100` with your server's actual IP address.
 
 ---
 
-### Mode 3: Docker on Raspberry Pi (Portainer or Docker Compose)
+### Mode 2: Docker on Raspberry Pi (Portainer or Docker Compose)
 
 Run Forge Finance as Docker containers on a Raspberry Pi (or any always-on Linux box). The app is served on port `8080`; the backend runs behind nginx and is not exposed directly.
 
