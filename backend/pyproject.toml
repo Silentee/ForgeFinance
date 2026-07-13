@@ -1,6 +1,6 @@
 [project]
 name = "forge-finance"
-version = "1.0.0"
+version = "1.0"
 description = "Personal finance tracking API"
 requires-python = ">=3.11"
 

@@ -1,7 +1,7 @@
 ; setup.iss — Inno Setup script for the Forge Finance Windows desktop app.
 ;
 ; Compiled by installer\build.ps1, which passes the version:
-;     ISCC.exe /DAppVersion=1.0.0 installer\setup.iss
+;     ISCC.exe /DAppVersion=1.0 installer\setup.iss
 ; Output: installer\Output\ForgeFinanceSetup-<version>.exe
 ;
 ; Per-user install (no admin / UAC). User data lives in

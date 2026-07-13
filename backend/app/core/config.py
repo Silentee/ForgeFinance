@@ -7,7 +7,7 @@ from app.core import paths
 
 class Settings(BaseSettings):
     app_name: str = "Forge Finance"
-    app_version: str = "1.0.0"
+    app_version: str = "1.0"
     debug: bool = True
 
     # Database — SQLite by default, easily swappable
