@@ -649,7 +649,6 @@ function AccountRow({
           {account.mask && <span className="text-ink-400 font-mono text-2xs">...{account.mask}</span>}
           {!account.include_in_net_worth && <span className="badge badge-ink">excluded</span>}
           {!account.is_active && <span className="badge badge-ink">inactive</span>}
-          {!account.track_transactions && <span className="badge badge-ink">not tracked</span>}
         </div>
         {account.balance_updated_at && (
           <p className="text-2xs text-ink-300 mt-0.5 ml-5">Updated {formatDate(account.balance_updated_at)}</p>
