@@ -92,6 +92,10 @@ class Account(Base):
     # Whether this is a liquid asset (can be quickly converted to cash)
     is_liquid: Mapped[bool] = mapped_column(Boolean, default=False)
 
+    # Whether this account participates in transaction tracking. When false the
+    # account is hidden from the transaction-import and transaction-filter pickers.
+    track_transactions: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+
     # Demo data flag — allows clearing all demo accounts at once
     is_demo: Mapped[bool] = mapped_column(Boolean, default=False)
 

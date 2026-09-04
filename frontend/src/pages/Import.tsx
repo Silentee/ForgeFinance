@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from 'react'
+import { useState, useCallback, useEffect, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useDropzone } from 'react-dropzone'
 import { useAccounts, useImports, useUploadCsv, useDeleteImport, useImportBalanceCsv, useAccountTypeMap } from '@/hooks'
@@ -670,8 +670,12 @@ export default function ImportPage() {
 
   const deleteImport = useDeleteImport()
 
-  // Map account id → name for labeling import history rows
+  // Map account id → name for labeling import history rows. Built from every
+  // account (not just tracked ones) so old imports keep their account name.
   const accountNameById = new Map((accounts ?? []).map(a => [a.id, a.name]))
+
+  // Only transaction-tracked accounts can receive a transaction CSV import.
+  const txAccounts = useMemo(() => (accounts ?? []).filter(a => a.track_transactions), [accounts])
 
   const [importMode, setImportMode] = useState<ImportMode>('transactions')
   const [accountId, setAccountId] = useState<number | ''>('')
@@ -698,6 +702,12 @@ export default function ImportPage() {
   useEffect(() => {
     if (preset !== 'custom') setCustomFile(null)
   }, [preset])
+
+  // Drop the selection if the chosen account stops tracking transactions
+  // (e.g. edited in another tab) so a hidden account can't stay selected.
+  useEffect(() => {
+    if (accountId && !txAccounts.some(a => a.id === accountId)) handleAccountChange('')
+  }, [txAccounts, accountId])
 
   const onDrop = useCallback(async (files: File[]) => {
     if (!accountId || !preset || files.length === 0) return
@@ -834,7 +844,7 @@ export default function ImportPage() {
                 className="w-full bg-surface-700 border border-white/[0.08] rounded-lg px-3 py-2 text-sm text-ink-100 focus:outline-none focus:border-amber-400/40 transition-colors"
               >
                 <option value="">Select an account...</option>
-                <GroupedAccountOptions accounts={accounts} accountTypes={accountTypes} />
+                <GroupedAccountOptions accounts={txAccounts} accountTypes={accountTypes} />
               </select>
             </div>
 

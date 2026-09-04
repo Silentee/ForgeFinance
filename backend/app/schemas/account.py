@@ -16,6 +16,7 @@ class AccountBase(BaseModel):
     is_active: bool = True
     include_in_net_worth: bool = True
     is_liquid: Optional[bool] = None  # If None, defaults based on account_type
+    track_transactions: bool = True
     notes: Optional[str] = None
     default_csv_preset: Optional[str] = None
     linked_liability_id: Optional[int] = None
@@ -49,6 +50,7 @@ class AccountUpdate(BaseModel):
     is_active: Optional[bool] = None
     include_in_net_worth: Optional[bool] = None
     is_liquid: Optional[bool] = None
+    track_transactions: Optional[bool] = None
     notes: Optional[str] = None
     default_csv_preset: Optional[str] = None
     linked_liability_id: Optional[int] = None
@@ -113,6 +115,7 @@ class AccountSummary(BaseModel):
     is_liability: bool
     is_liquid: bool
     net_worth_value: float
+    track_transactions: bool
     notes: Optional[str] = None
     default_csv_preset: Optional[str] = None
     linked_liability_id: Optional[int] = None

@@ -516,9 +516,14 @@ export default function TransactionsPage() {
     })
   }, [transactions, excludedCfCategoryKeys])
 
-  // The account filter dropdown lists all accounts (independent of the current
-  // result set) so selecting one doesn't collapse the choices to just itself.
-  const accountOptions = accounts ?? []
+  // The account filter dropdown lists transaction-tracked accounts only, and
+  // lists them independently of the current result set so selecting one doesn't
+  // collapse the choices to just itself. An already-selected account stays
+  // listed even if untracked (a deep link can select one) so it can be cleared.
+  const accountOptions = useMemo(() => {
+    const selected = new Set(accountFilter.mode === 'selected' ? accountFilter.accountIds : [])
+    return (accounts ?? []).filter(a => a.track_transactions || selected.has(a.id))
+  }, [accounts, accountFilter])
   const accountNameById = useMemo(() => {
     const map = new Map<number, string>()
     for (const a of accountOptions) map.set(a.id, a.name)

@@ -58,6 +58,7 @@ export interface Account {
   is_liability: boolean
   is_liquid: boolean
   net_worth_value: number
+  track_transactions: boolean
   notes?: string
   default_csv_preset?: string
   linked_liability_id?: number
@@ -77,6 +78,7 @@ export interface AccountCreate {
   is_active?: boolean
   include_in_net_worth?: boolean
   is_liquid?: boolean
+  track_transactions?: boolean
   notes?: string
   initial_balance?: number
   default_csv_preset?: string
@@ -92,6 +94,7 @@ export interface AccountUpdate {
   is_active?: boolean
   include_in_net_worth?: boolean
   is_liquid?: boolean
+  track_transactions?: boolean
   notes?: string
   default_csv_preset?: string | null
   linked_liability_id?: number | null

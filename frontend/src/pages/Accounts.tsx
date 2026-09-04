@@ -37,7 +37,7 @@ function AddAccountModal({ allAccounts, onClose }: { allAccounts: Account[]; onC
   const { data: presets } = useQuery({ queryKey: ['import-presets'], queryFn: importsApi.getPresets })
   const [form, setForm] = useState<Partial<AccountCreate> & { name: string }>({
     name: '', currency: 'USD',
-    is_active: true, include_in_net_worth: true,
+    is_active: true, include_in_net_worth: true, track_transactions: true,
   })
 
   // Check if the selected account type is an asset (not a liability)
@@ -133,6 +133,17 @@ function AddAccountModal({ allAccounts, onClose }: { allAccounts: Account[]; onC
           />
         </div>
         <div className="space-y-2">
+          <div>
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={form.track_transactions ?? true}
+                onChange={e => setForm(f => ({ ...f, track_transactions: e.target.checked }))}
+                className="accent-amber-400"
+              />
+              <span className="text-sm text-ink-200">Track transactions</span>
+            </label>
+          </div>
           <label className="flex items-center gap-2 cursor-pointer">
             <input
               type="checkbox"
@@ -204,6 +215,7 @@ function AccountDetailModal({
     is_active: account.is_active,
     include_in_net_worth: account.include_in_net_worth,
     is_liquid: account.is_liquid,
+    track_transactions: account.track_transactions,
     notes: account.notes,
     default_csv_preset: account.default_csv_preset,
     linked_liability_id: account.linked_liability_id,
@@ -398,6 +410,17 @@ function AccountDetailModal({
           />
         </div>
         <div className="space-y-2">
+              <div>
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={form.track_transactions ?? true}
+                    onChange={e => setForm(f => ({ ...f, track_transactions: e.target.checked }))}
+                    className="accent-amber-400"
+                  />
+                  <span className="text-sm text-ink-200">Track transactions</span>
+                </label>
+              </div>
               <label className="flex items-center gap-2 cursor-pointer">
                 <input
                   type="checkbox"
@@ -626,6 +649,7 @@ function AccountRow({
           {account.mask && <span className="text-ink-400 font-mono text-2xs">...{account.mask}</span>}
           {!account.include_in_net_worth && <span className="badge badge-ink">excluded</span>}
           {!account.is_active && <span className="badge badge-ink">inactive</span>}
+          {!account.track_transactions && <span className="badge badge-ink">not tracked</span>}
         </div>
         {account.balance_updated_at && (
           <p className="text-2xs text-ink-300 mt-0.5 ml-5">Updated {formatDate(account.balance_updated_at)}</p>
