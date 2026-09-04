@@ -34,7 +34,7 @@ class SubscriptionItem(BaseModel):
     amount: float                        # latest charge
     previous_amount: Optional[float] = None
     price_increased: bool = False
-    price_change_pct: Optional[float] = None
+    price_increased_on: Optional[str] = None  # ISO date the current price first appeared
     first_charged: Optional[str] = None  # ISO dates; None on a manual entry with no charges
     last_charged: Optional[str] = None
     next_expected: Optional[str] = None

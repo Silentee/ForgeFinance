@@ -22,8 +22,10 @@ import {
   formatCurrency,
   formatCurrencyWhole,
   formatDateShort,
+  formatTimeAgo,
   sortBySortOrder,
 } from '@/lib/format'
+import type { TimeAgoUnit } from '@/lib/format'
 import type {
   SubscriptionCadence,
   SubscriptionCadenceOverride,
@@ -41,6 +43,18 @@ const CADENCE_LABELS: Record<SubscriptionCadence, string> = {
   semiannual: 'Every 6 months',
   annual: 'Yearly',
   irregular: 'Irregular',
+}
+
+// The unit a price change reads best in: a weekly plan's increase is "6 weeks
+// ago", not "1 month ago". Irregular has no cadence to borrow, so use months.
+const CADENCE_AGO_UNIT: Record<SubscriptionCadence, TimeAgoUnit> = {
+  weekly: 'week',
+  biweekly: 'week',
+  monthly: 'month',
+  quarterly: 'month',
+  semiannual: 'month',
+  annual: 'year',
+  irregular: 'month',
 }
 
 // 'irregular' is only ever derived by detection, never settable as an override.
@@ -169,9 +183,10 @@ function SubscriptionRows({
               <td className="py-2.5 pr-3 text-right">
                 <span className="font-mono text-ink-100">{formatCurrency(item.amount)}</span>
                 {item.price_increased && item.previous_amount != null && (
-                  <div className="text-2xs text-rose-400">
+                  <div className="text-2xs text-rose-400 whitespace-nowrap">
                     ↑ from {formatCurrency(item.previous_amount)}
-                    {item.price_change_pct != null && ` (+${item.price_change_pct}%)`}
+                    {item.price_increased_on &&
+                      ` · ${formatTimeAgo(item.price_increased_on, CADENCE_AGO_UNIT[item.cadence])}`}
                   </div>
                 )}
               </td>

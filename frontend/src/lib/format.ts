@@ -1,4 +1,4 @@
-import { format, parseISO } from 'date-fns'
+import { differenceInDays, format, parseISO } from 'date-fns'
 
 // ─── Currency ─────────────────────────────────────────────────────────────────
 
@@ -85,6 +85,38 @@ export function formatDateShort(isoString: string | undefined | null): string {
   if (!isoString) return '—'
   try {
     return format(parseISO(isoString), 'MM/dd/yyyy')
+  } catch {
+    return isoString
+  }
+}
+
+// Coarsest to finest, with the nominal length used to turn an elapsed span
+// into whole units. Averaged lengths are fine here — the output is a rough
+// "how long ago", never a calculation anything depends on.
+const AGO_UNITS = [
+  { unit: 'year', days: 365.25 },
+  { unit: 'month', days: 30.44 },
+  { unit: 'week', days: 7 },
+  { unit: 'day', days: 1 },
+] as const
+
+export type TimeAgoUnit = (typeof AGO_UNITS)[number]['unit']
+
+/** "2 months ago" / "6 weeks ago" — elapsed time since an ISO date, counted in
+ *  `unit`, stepping down to a finer one until a whole unit has actually passed
+ *  (so a 12-day-old change reads "2 weeks ago", not "0 months ago", and a
+ *  200-day-old one isn't rounded up to "1 year ago"). The count itself rounds,
+ *  so 59 days reads "2 months ago" rather than being floored to one. */
+export function formatTimeAgo(isoString: string, unit: TimeAgoUnit = 'day'): string {
+  try {
+    const elapsed = differenceInDays(new Date(), parseISO(isoString))
+    const start = AGO_UNITS.findIndex(u => u.unit === unit)
+    for (const step of AGO_UNITS.slice(start === -1 ? 0 : start)) {
+      if (elapsed < step.days) continue
+      const n = Math.round(elapsed / step.days)
+      return `${n} ${step.unit}${n === 1 ? '' : 's'} ago`
+    }
+    return 'today'
   } catch {
     return isoString
   }

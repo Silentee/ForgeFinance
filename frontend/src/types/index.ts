@@ -393,7 +393,8 @@ export interface SubscriptionItem {
   amount: number
   previous_amount?: number
   price_increased: boolean
-  price_change_pct?: number
+  // ISO date the current price first appeared; set only while price_increased
+  price_increased_on?: string | null
   // null on a manual entry with no charges attached
   first_charged?: string | null
   last_charged?: string | null

@@ -120,8 +120,26 @@ def test_price_increase_flag(db):
     assert item.price_increased is True
     assert item.amount == 12.99
     assert item.previous_amount == 9.99
-    assert item.price_change_pct == 30.0
+    # Only the final charge is at the new price, so that's when it took effect.
+    assert item.price_increased_on == _days_ago(5).isoformat()
     assert report.price_increase_count == 1
+
+
+def test_price_increase_date_predates_last_charge(db):
+    """The increase is dated to the first charge at the new price, not the last."""
+    acct, subs, user = _setup(db)
+    for i in range(6, 3, -1):
+        _tx(db, acct, subs, 9.99, TransactionType.DEBIT, _days_ago(30 * i + 5))
+    for i in range(3, 0, -1):
+        _tx(db, acct, subs, 12.99, TransactionType.DEBIT, _days_ago(30 * i + 5))
+    db.commit()
+
+    report = build_subscriptions_report(db, user.id)
+
+    item = report.subscriptions[0]
+    assert item.price_increased is True
+    assert item.previous_amount == 9.99
+    assert item.price_increased_on == _days_ago(30 * 3 + 5).isoformat()
 
 
 def test_price_decrease_not_flagged(db):
@@ -135,7 +153,7 @@ def test_price_decrease_not_flagged(db):
 
     item = report.subscriptions[0]
     assert item.price_increased is False
-    assert item.price_change_pct is None
+    assert item.price_increased_on is None
 
 
 def test_lapsed_status(db):

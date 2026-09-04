@@ -215,6 +215,20 @@ def _amounts_similar(amounts: list[float]) -> bool:
     return within / len(amounts) >= AMOUNT_REGULARITY
 
 
+def _price_increase_date(dates: list[date], amounts: list[float]) -> date:
+    """Date the current price took effect.
+
+    Walks back from the latest charge across every occurrence still at that
+    price, using the same 2% band as the increase test so a charge differing
+    by a rounding cent isn't mistaken for the old price.
+    """
+    current = amounts[-1]
+    i = len(amounts) - 1
+    while i > 0 and abs(amounts[i - 1] - current) <= max(0.02 * current, 0.01):
+        i -= 1
+    return dates[i]
+
+
 class _GroupStats(NamedTuple):
     occurrences: list[tuple[date, float]]
     display_name: str
@@ -335,9 +349,7 @@ def _build_item(
         and amount > previous_amount * 1.02
         and amount - previous_amount > 0.01
     )
-    price_change_pct = (
-        round((amount / previous_amount - 1) * 100, 1) if price_increased else None
-    )
+    price_increased_on = _price_increase_date(dates, amounts) if price_increased else None
 
     if cadence_override is not None:
         # User-forced cadence: all interval math uses the nominal cadence
@@ -382,7 +394,7 @@ def _build_item(
         amount=round(amount, 2),
         previous_amount=previous_amount,
         price_increased=price_increased,
-        price_change_pct=price_change_pct,
+        price_increased_on=price_increased_on.isoformat() if price_increased_on else None,
         first_charged=dates[0].isoformat(),
         last_charged=last_charged.isoformat(),
         next_expected=next_expected.isoformat() if next_expected else None,
