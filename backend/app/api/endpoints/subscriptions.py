@@ -4,8 +4,10 @@ subscriptions.py — Per-merchant overrides for the subscription report.
 The report itself lives at /reports/subscriptions (read-only, like all
 reports). These endpoints manage the SubscriptionRule rows that dismiss
 detected merchants (rule='exclude'), force-track missed ones
-(rule='include'), rename a subscription (nickname), or link merchant keys
-together so drifting descriptors report as one subscription (alias_of).
+(rule='include'), rename a subscription (nickname), pin its cadence or
+status, or link merchant keys together so drifting descriptors report as
+one subscription (alias_of). They also create and edit manual entries —
+subscriptions the user declared outright, which need no charges at all.
 """
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -16,6 +18,7 @@ from app.db.session import get_db
 from app.models import SubscriptionRule, Transaction
 from app.models.user import User
 from app.schemas.subscriptions import (
+    ManualEntryUpdate,
     ManualSubscriptionCreate,
     MerchantKeyResolution,
     MerchantKeyResolveRequest,
@@ -24,16 +27,20 @@ from app.schemas.subscriptions import (
     SubscriptionNicknameUpsert,
     SubscriptionRuleRead,
     SubscriptionRuleUpsert,
+    SubscriptionStatusUpsert,
     SubscriptionUnlinkRequest,
 )
 from app.services.subscriptions import (
-    create_manual_subscription,
+    create_manual_entry,
+    delete_manual_entry,
     link_merchants,
     normalize_merchant,
     remove_rule,
     set_cadence_override,
     set_nickname,
+    set_status_override,
     unlink_merchant,
+    update_manual_entry,
 )
 
 router = APIRouter()
@@ -112,7 +119,20 @@ def upsert_cadence(
     user: User = Depends(get_current_user),
 ):
     """Set or clear (cadence omitted) a merchant's forced billing cadence."""
-    set_cadence_override(db, user.id, payload.merchant_key, payload.cadence)
+    try:
+        set_cadence_override(db, user.id, payload.merchant_key, payload.cadence)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@router.put("/status", status_code=status.HTTP_204_NO_CONTENT)
+def upsert_status(
+    payload: SubscriptionStatusUpsert,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """Pin a merchant's status, or clear it (status omitted) back to detection."""
+    set_status_override(db, user.id, payload.merchant_key, payload.status)
 
 
 @router.post("/manual", response_model=SubscriptionRuleRead, status_code=status.HTTP_201_CREATED)
@@ -121,15 +141,52 @@ def add_manual(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    """Manually track a subscription from merchant keys picked off transactions.
+    """Manually track a subscription.
 
-    The first key becomes the canonical merchant (include rule + nickname);
-    the rest are linked into it.
+    It gets its own synthetic merchant key, so it exists independently of
+    any transaction; merchant keys picked off transactions are linked into
+    it. amount/cadence are required when none are.
     """
     try:
-        return create_manual_subscription(db, user.id, payload.name, payload.merchant_keys)
+        return create_manual_entry(
+            db,
+            user.id,
+            payload.name,
+            payload.amount,
+            payload.cadence,
+            payload.start_date,
+            payload.merchant_keys,
+        )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
+
+
+@router.put("/manual", status_code=status.HTTP_204_NO_CONTENT)
+def edit_manual(
+    payload: ManualEntryUpdate,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """Replace a manual entry's amount and billing anchor (omitting one clears it)."""
+    try:
+        found = update_manual_entry(
+            db, user.id, payload.merchant_key, payload.amount, payload.start_date
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    if not found:
+        raise HTTPException(status_code=404, detail="Subscription not found")
+
+
+@router.delete("/manual/{rule_id}", status_code=status.HTTP_204_NO_CONTENT)
+def remove_manual(
+    rule_id: int,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """Delete a manual entry and release the merchants attached to it."""
+    if not delete_manual_entry(db, user.id, rule_id):
+        raise HTTPException(status_code=404, detail="Subscription not found")
 
 
 @router.post("/resolve-keys", response_model=list[MerchantKeyResolution])

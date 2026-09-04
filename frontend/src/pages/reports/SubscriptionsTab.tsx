@@ -7,7 +7,10 @@ import {
   useDeleteSubscriptionRule,
   useSetSubscriptionNickname,
   useSetSubscriptionCadence,
+  useSetSubscriptionStatus,
   useCreateManualSubscription,
+  useUpdateManualSubscription,
+  useDeleteManualSubscription,
   useResolveMerchantKeys,
   useLinkSubscriptions,
   useUnlinkSubscription,
@@ -25,6 +28,7 @@ import type {
   SubscriptionCadence,
   SubscriptionCadenceOverride,
   SubscriptionItem,
+  SubscriptionStatusOverride,
   SubscriptionsReport,
 } from '@/types'
 import clsx from 'clsx'
@@ -44,6 +48,11 @@ const CADENCE_OVERRIDE_OPTIONS: SubscriptionCadenceOverride[] = [
   'weekly', 'biweekly', 'monthly', 'quarterly', 'semiannual', 'annual',
 ]
 
+const STATUS_OVERRIDE_OPTIONS: { value: SubscriptionStatusOverride; label: string }[] = [
+  { value: 'active', label: 'Active' },
+  { value: 'inactive', label: 'Inactive' },
+]
+
 const CANDIDATE_REASONS: Record<string, string> = {
   irregular_cadence: 'charges arrive at irregular intervals',
   amount_varies: 'amounts vary too much between charges',
@@ -54,6 +63,9 @@ const CANDIDATE_REASONS: Record<string, string> = {
 // are technically subscriptions but usually noise on this report.
 const DEFAULT_HIDDEN_GROUPS = new Set(['essential', 'utilities'])
 
+const INPUT_CLASS =
+  'w-full bg-surface-700 border border-white/[0.08] rounded-lg px-3 py-2 text-sm text-ink-100 focus:outline-none focus:border-amber-400/40'
+
 interface CategoryFilter {
   categoryIds: number[]
   includeUncategorized: boolean
@@ -63,17 +75,23 @@ interface CategoryFilter {
 const displayName = (x: { nickname?: string; display_name: string }) =>
   x.nickname || x.display_name
 
-function StatusBadge({ status }: { status: SubscriptionItem['status'] }) {
+const dateOrDash = (iso?: string | null) => (iso ? formatDateShort(iso) : '—')
+
+function StatusBadge({ item }: { item: SubscriptionItem }) {
+  // A pinned 'inactive' reports as lapsed, so the badge stays two-valued;
+  // the tooltip is what tells you the value was set by hand.
+  const pinned = item.status_override
   return (
     <span
+      title={pinned ? `Manually set to ${pinned}` : undefined}
       className={clsx(
         'inline-block rounded-full px-2 py-0.5 text-2xs font-medium',
-        status === 'active'
+        item.status === 'active'
           ? 'bg-teal-400/10 text-teal-400'
           : 'bg-amber-400/10 text-amber-400'
       )}
     >
-      {status === 'active' ? 'Active' : 'Lapsed'}
+      {item.status === 'active' ? 'Active' : 'Lapsed'}
     </span>
   )
 }
@@ -91,13 +109,15 @@ function SubscriptionRows({
     <table className="w-full text-sm">
       <thead>
         <tr className="text-left text-2xs uppercase tracking-wider text-ink-400 border-b border-white/[0.06]">
-          <th className="py-2 pr-3 font-medium">Merchant</th>
-          <th className="py-2 pr-3 font-medium text-right">Amount</th>
-          <th className="py-2 pr-3 font-medium">Cadence</th>
-          <th className="py-2 pr-3 font-medium">Last charged</th>
-          <th className="py-2 pr-3 font-medium">Next expected</th>
-          <th className="py-2 pr-3 font-medium text-right">Monthly eq.</th>
-          <th className="py-2 pr-3 font-medium">Status</th>
+          {/* The merchant name and its badges need the room; everything else
+              is short and fixed-width. */}
+          <th className="py-2 pr-3 font-medium w-[32%]">Merchant</th>
+          <th className="py-2 pr-3 font-medium text-right whitespace-nowrap">Amount</th>
+          <th className="py-2 pr-3 font-medium whitespace-nowrap">Cadence</th>
+          <th className="py-2 pr-3 font-medium whitespace-nowrap">Last charged</th>
+          <th className="py-2 pr-3 font-medium whitespace-nowrap">Next expected</th>
+          <th className="py-2 pr-3 font-medium text-right whitespace-nowrap">Monthly eq.</th>
+          <th className="py-2 pr-3 font-medium whitespace-nowrap">Status</th>
           <th className="py-2 font-medium" />
         </tr>
       </thead>
@@ -105,38 +125,34 @@ function SubscriptionRows({
         {items.map(item => {
           const act = action(item)
           return (
-            <tr key={item.merchant_key} className="border-b border-white/[0.04] last:border-0">
+            <tr
+              key={item.merchant_key}
+              onClick={onEdit ? () => onEdit(item) : undefined}
+              className={clsx(
+                'border-b border-white/[0.04] last:border-0',
+                onEdit && 'cursor-pointer hover:bg-white/[0.02] transition-colors'
+              )}
+            >
               <td className="py-2.5 pr-3">
-                <div
-                  className="text-ink-100 truncate max-w-[220px]"
-                  title={
-                    item.nickname
-                      ? `${item.nickname} — detected as "${item.display_name}"`
-                      : item.display_name
-                  }
-                >
-                  {displayName(item)}
+                <div className="flex items-center gap-2 min-w-0">
+                  <span
+                    className="truncate max-w-[340px] text-ink-100"
+                    title={
+                      item.nickname && !item.is_manual_entry
+                        ? `${item.nickname} — detected as "${item.display_name}"`
+                        : item.display_name
+                    }
+                  >
+                    {displayName(item)}
+                  </span>
                   {item.is_manual && (
-                    <span className="ml-2 rounded-full bg-sky-400/10 px-2 py-0.5 text-2xs text-sky-400">
+                    <span className="shrink-0 rounded-full bg-sky-400/10 px-2 py-0.5 text-2xs text-sky-400">
                       manual
-                    </span>
-                  )}
-                  {item.is_tagged && (
-                    <span className="ml-2 rounded-full bg-violet-400/10 px-2 py-0.5 text-2xs text-violet-400">
-                      tagged
-                    </span>
-                  )}
-                  {item.linked_merchants.length > 0 && (
-                    <span
-                      className="ml-2 rounded-full bg-cyan-400/10 px-2 py-0.5 text-2xs text-cyan-400"
-                      title={`Includes ${item.linked_merchants.map(m => m.display_name).join(', ')}`}
-                    >
-                      linked ×{item.linked_merchants.length + 1}
                     </span>
                   )}
                   {item.has_duplicates && (
                     <span
-                      className="ml-2 rounded-full bg-rose-400/10 px-2 py-0.5 text-2xs text-rose-400"
+                      className="shrink-0 rounded-full bg-rose-400/10 px-2 py-0.5 text-2xs text-rose-400"
                       title={`Charged more than once in: ${item.duplicate_periods.join(', ')}`}
                     >
                       duplicate?
@@ -157,25 +173,20 @@ function SubscriptionRows({
                 )}
               </td>
               <td className="py-2.5 pr-3 text-ink-200">{CADENCE_LABELS[item.cadence]}</td>
-              <td className="py-2.5 pr-3 text-ink-200">{formatDateShort(item.last_charged)}</td>
-              <td className="py-2.5 pr-3 text-ink-200">
-                {item.next_expected ? formatDateShort(item.next_expected) : '—'}
-              </td>
+              <td className="py-2.5 pr-3 text-ink-200">{dateOrDash(item.last_charged)}</td>
+              <td className="py-2.5 pr-3 text-ink-200">{dateOrDash(item.next_expected)}</td>
               <td className="py-2.5 pr-3 text-right font-mono text-ink-100">
                 {formatCurrency(item.monthly_equivalent)}
               </td>
               <td className="py-2.5 pr-3">
-                <StatusBadge status={item.status} />
+                <StatusBadge item={item} />
               </td>
-              <td className="py-2.5 text-right whitespace-nowrap">
-                {onEdit && (
-                  <button
-                    onClick={() => onEdit(item)}
-                    className="mr-3 text-xs text-ink-400 hover:text-ink-100"
-                  >
-                    Edit
-                  </button>
-                )}
+              {/* Row clicks open the editor, so the action button has to keep
+                  its own click to itself. */}
+              <td
+                className="py-2.5 text-right whitespace-nowrap"
+                onClick={e => e.stopPropagation()}
+              >
                 <button
                   onClick={act.onClick}
                   disabled={act.disabled}
@@ -192,6 +203,88 @@ function SubscriptionRows({
   )
 }
 
+/** Debounced transaction search with checkboxes — the way both dialogs turn
+ *  charges the user recognizes into the merchant keys the report groups by. */
+function TransactionPicker({
+  selected,
+  onToggle,
+  disabled,
+}: {
+  selected: Set<number>
+  onToggle: (id: number) => void
+  disabled: boolean
+}) {
+  const [search, setSearch] = useState('')
+  const query = useDebouncedValue(search.trim(), 300)
+  const { data: results, isFetching } = useQuery({
+    queryKey: ['transactions', 'sub-search', query],
+    queryFn: () => transactionsApi.list({ search: query, transaction_type: 'debit', limit: 25 }),
+    enabled: query.length >= 2,
+  })
+
+  return (
+    <>
+      <input
+        value={search}
+        onChange={e => setSearch(e.target.value)}
+        placeholder="Search transactions by description or merchant…"
+        className={`${INPUT_CLASS} mb-1`}
+      />
+      {query.length < 2 ? (
+        <p className="text-xs text-ink-400 px-2 py-2">
+          Type at least 2 characters to search your charges.
+        </p>
+      ) : isFetching && !results ? (
+        <div className="flex justify-center py-3">
+          <Spinner size="sm" />
+        </div>
+      ) : (
+        <div className="max-h-48 overflow-y-auto">
+          {(results ?? []).map(tx => (
+            <CheckboxRow
+              key={tx.id}
+              checked={selected.has(tx.id)}
+              label={tx.merchant_name || tx.description || tx.original_description}
+              sublabel={`${formatDateShort(tx.date)} · ${formatCurrency(tx.amount)}${
+                tx.account_name ? ` · ${tx.account_name}` : ''
+              }`}
+              disabled={disabled}
+              onToggle={() => onToggle(tx.id)}
+            />
+          ))}
+          {(results ?? []).length === 0 && (
+            <p className="text-xs text-ink-400 px-2 py-2">No matching charges.</p>
+          )}
+        </div>
+      )}
+    </>
+  )
+}
+
+/** Deduped merchant keys behind a set of picked transactions.
+ *
+ *  A subscription tracks merchants, not individual transactions: each picked
+ *  charge resolves to its normalized merchant key, and every past and future
+ *  charge under that key counts toward the subscription. */
+function useMerchantKeysFor(selected: Set<number>): string[] {
+  const ids = useMemo(() => Array.from(selected), [selected])
+  const { data: resolutions } = useResolveMerchantKeys(ids)
+  return useMemo(() => {
+    const keys: string[] = []
+    for (const r of resolutions ?? []) {
+      if (!keys.includes(r.merchant_key)) keys.push(r.merchant_key)
+    }
+    return keys
+  }, [resolutions])
+}
+
+const toggleIn = <T,>(prev: Set<T>, value: T) => {
+  const next = new Set(prev)
+  if (next.has(value)) next.delete(value)
+  else next.add(value)
+  return next
+}
+
 function EditSubscriptionDialog({
   item,
   report,
@@ -203,16 +296,29 @@ function EditSubscriptionDialog({
 }) {
   const setNickname = useSetSubscriptionNickname()
   const setCadence = useSetSubscriptionCadence()
+  const setStatus = useSetSubscriptionStatus()
+  const updateManual = useUpdateManualSubscription()
   const linkSubs = useLinkSubscriptions()
   const unlinkSub = useUnlinkSubscription()
 
   const [nickname, setNicknameText] = useState(item.nickname ?? '')
   const [cadence, setCadenceValue] = useState<string>(item.cadence_override ?? '')
+  const [statusValue, setStatusValue] = useState<string>(item.status_override ?? '')
+  const [amount, setAmount] = useState(
+    item.manual_amount != null ? String(item.manual_amount) : ''
+  )
+  const [startDate, setStartDate] = useState(item.manual_start_date ?? '')
   const [search, setSearch] = useState('')
   const [selected, setSelected] = useState<Set<string>>(new Set())
+  const [selectedTxIds, setSelectedTxIds] = useState<Set<number>>(new Set())
 
   const busy =
-    setNickname.isPending || setCadence.isPending || linkSubs.isPending || unlinkSub.isPending
+    setNickname.isPending ||
+    setCadence.isPending ||
+    setStatus.isPending ||
+    updateManual.isPending ||
+    linkSubs.isPending ||
+    unlinkSub.isPending
 
   // Other report rows that can be merged into this subscription. Rows
   // already linked somewhere don't appear in the report, so this list is
@@ -242,6 +348,14 @@ function EditSubscriptionDialog({
     ? options.filter(o => o.label.toLowerCase().includes(query) || o.key.includes(query))
     : options
 
+  // Keys from picked report rows and picked transactions land in the same
+  // Link action; anything already part of this subscription is dropped.
+  const txKeys = useMerchantKeysFor(selectedTxIds)
+  const keysToLink = useMemo(() => {
+    const owned = new Set([item.merchant_key, ...item.linked_merchants.map(m => m.key)])
+    return Array.from(new Set([...selected, ...txKeys])).filter(k => !owned.has(k))
+  }, [selected, txKeys, item.merchant_key, item.linked_merchants])
+
   const nicknameDirty = nickname.trim() !== (item.nickname ?? '')
   const saveNickname = () => {
     if (!nicknameDirty) return
@@ -260,37 +374,56 @@ function EditSubscriptionDialog({
     })
   }
 
+  const statusDirty = statusValue !== (item.status_override ?? '')
+  const saveStatus = () => {
+    if (!statusDirty) return
+    setStatus.mutate({
+      merchant_key: item.merchant_key,
+      status: (statusValue || undefined) as SubscriptionStatusOverride | undefined,
+    })
+  }
+
+  const detailDirty =
+    amount !== (item.manual_amount != null ? String(item.manual_amount) : '') ||
+    startDate !== (item.manual_start_date ?? '')
+  const saveDetail = () => {
+    if (!detailDirty) return
+    const parsed = Number(amount)
+    updateManual.mutate({
+      merchant_key: item.merchant_key,
+      amount: amount.trim() && parsed > 0 ? parsed : undefined,
+      start_date: startDate || undefined,
+    })
+  }
+
   const linkSelected = () =>
     linkSubs.mutate(
-      { target_key: item.merchant_key, merchant_keys: Array.from(selected) },
-      { onSuccess: () => setSelected(new Set()) }
+      { target_key: item.merchant_key, merchant_keys: keysToLink },
+      {
+        onSuccess: () => {
+          setSelected(new Set())
+          setSelectedTxIds(new Set())
+        },
+      }
     )
-
-  const toggleSelected = (key: string) =>
-    setSelected(prev => {
-      const next = new Set(prev)
-      if (next.has(key)) next.delete(key)
-      else next.add(key)
-      return next
-    })
 
   return (
     <Modal onClose={onClose}>
       <h3 className="text-lg font-medium text-ink-100 mb-1">Edit subscription</h3>
       <p className="text-xs text-ink-400 mb-4 truncate" title={item.display_name}>
-        detected as “{item.display_name}”
+        {item.is_manual_entry ? 'added manually' : `detected as “${item.display_name}”`}
       </p>
 
       <div className="space-y-5">
         <div>
-          <label className="label block mb-1.5">Nickname</label>
+          <label className="label block mb-1.5">Name</label>
           <div className="flex gap-2">
             <input
               value={nickname}
               onChange={e => setNicknameText(e.target.value)}
               onKeyDown={e => e.key === 'Enter' && saveNickname()}
               placeholder={item.display_name}
-              className="min-w-0 flex-1 bg-surface-700 border border-white/[0.08] rounded-lg px-3 py-2 text-sm text-ink-100 focus:outline-none focus:border-amber-400/40"
+              className={`min-w-0 flex-1 ${INPUT_CLASS}`}
             />
             <Button
               size="sm"
@@ -302,7 +435,39 @@ function EditSubscriptionDialog({
             </Button>
           </div>
           <p className="text-2xs text-ink-400 mt-1">
-            Shown in place of the detected name. Leave empty to clear.
+            {item.is_manual_entry
+              ? 'What this subscription is called.'
+              : 'Shown in place of the detected name. Leave empty to clear.'}
+          </p>
+        </div>
+
+        <div>
+          <label className="label block mb-1.5">Status</label>
+          <div className="flex gap-2">
+            <select
+              value={statusValue}
+              onChange={e => setStatusValue(e.target.value)}
+              className={`min-w-0 flex-1 ${INPUT_CLASS}`}
+            >
+              <option value="">Auto — use detection</option>
+              {STATUS_OVERRIDE_OPTIONS.map(o => (
+                <option key={o.value} value={o.value}>
+                  {o.label}
+                </option>
+              ))}
+            </select>
+            <Button
+              size="sm"
+              onClick={saveStatus}
+              loading={setStatus.isPending}
+              disabled={busy || !statusDirty}
+            >
+              Save
+            </Button>
+          </div>
+          <p className="text-2xs text-ink-400 mt-1">
+            Auto marks a subscription lapsed once it stops being charged. Inactive pins it
+            there, keeping its cost out of the recurring totals.
           </p>
         </div>
 
@@ -312,9 +477,11 @@ function EditSubscriptionDialog({
             <select
               value={cadence}
               onChange={e => setCadenceValue(e.target.value)}
-              className="min-w-0 flex-1 bg-surface-700 border border-white/[0.08] rounded-lg px-3 py-2 text-sm text-ink-100 focus:outline-none focus:border-amber-400/40"
+              className={`min-w-0 flex-1 ${INPUT_CLASS}`}
             >
-              <option value="">Auto-detect</option>
+              {/* A manual entry has no charge series to infer a cadence from,
+                  so it must keep one. */}
+              {!item.is_manual_entry && <option value="">Auto-detect</option>}
               {CADENCE_OVERRIDE_OPTIONS.map(c => (
                 <option key={c} value={c}>
                   {CADENCE_LABELS[c]}
@@ -336,6 +503,42 @@ function EditSubscriptionDialog({
           </p>
         </div>
 
+        {item.is_manual_entry && (
+          <div>
+            <label className="label block mb-1.5">Cost &amp; billing date</label>
+            <div className="flex gap-2">
+              <input
+                type="number"
+                step="0.01"
+                min="0"
+                value={amount}
+                onChange={e => setAmount(e.target.value)}
+                placeholder="0.00"
+                className={`min-w-0 flex-1 ${INPUT_CLASS}`}
+              />
+              <input
+                type="date"
+                value={startDate}
+                onChange={e => setStartDate(e.target.value)}
+                className={`min-w-0 flex-1 ${INPUT_CLASS}`}
+              />
+              <Button
+                size="sm"
+                onClick={saveDetail}
+                loading={updateManual.isPending}
+                disabled={busy || !detailDirty}
+              >
+                Save
+              </Button>
+            </div>
+            <p className="text-2xs text-ink-400 mt-1">
+              {item.occurrence_count > 0
+                ? 'Kept as a fallback — the linked charges below are what the report uses.'
+                : 'What this costs and when it bills, until charges are linked below.'}
+            </p>
+          </div>
+        )}
+
         {item.has_duplicates && (
           <div className="rounded-lg border border-amber-400/20 bg-amber-400/5 px-3 py-2 text-xs text-amber-300">
             Charged more than once in: {item.duplicate_periods.join(', ')}. Possible
@@ -346,14 +549,16 @@ function EditSubscriptionDialog({
         <div>
           <label className="label block mb-1.5">Linked merchants</label>
           <div className="space-y-1">
-            <div className="flex items-center justify-between gap-2 rounded border border-white/[0.06] px-3 py-1.5">
-              <span className="text-sm text-ink-200 truncate" title={item.merchant_key}>
-                {item.display_name}
-              </span>
-              <span className="shrink-0 rounded-full bg-white/[0.06] px-2 py-0.5 text-2xs text-ink-400">
-                primary
-              </span>
-            </div>
+            {!item.is_manual_entry && (
+              <div className="flex items-center justify-between gap-2 rounded border border-white/[0.06] px-3 py-1.5">
+                <span className="text-sm text-ink-200 truncate" title={item.merchant_key}>
+                  {item.display_name}
+                </span>
+                <span className="shrink-0 rounded-full bg-white/[0.06] px-2 py-0.5 text-2xs text-ink-400">
+                  primary
+                </span>
+              </div>
+            )}
             {item.linked_merchants.map(m => (
               <div
                 key={m.key}
@@ -371,6 +576,9 @@ function EditSubscriptionDialog({
                 </button>
               </div>
             ))}
+            {item.is_manual_entry && item.linked_merchants.length === 0 && (
+              <p className="text-xs text-ink-400">No charges attached yet.</p>
+            )}
           </div>
           <p className="text-2xs text-ink-400 mt-1">
             All merchant names whose charges count toward this subscription.
@@ -378,20 +586,26 @@ function EditSubscriptionDialog({
         </div>
 
         <div>
-          <label className="label block mb-1.5">Link another charge</label>
+          <label className="label block mb-1.5">Attach charges</label>
           <p className="text-2xs text-ink-400 mb-2">
-            Link rows that are really this same subscription under a different name —
-            their charges then count as one recurring series.
+            Pick a transaction, or another row that is really this same subscription under a
+            different name — its merchant is attached, so past and future charges count here.
           </p>
-          {options.length === 0 ? (
-            <p className="text-xs text-ink-400">No other rows available to link.</p>
-          ) : (
-            <>
+
+          <TransactionPicker
+            selected={selectedTxIds}
+            onToggle={id => setSelectedTxIds(prev => toggleIn(prev, id))}
+            disabled={busy}
+          />
+
+          {options.length > 0 && (
+            <div className="mt-3">
+              <p className="text-2xs text-ink-400 mb-1">…or from this report</p>
               <input
                 value={search}
                 onChange={e => setSearch(e.target.value)}
                 placeholder="Search merchants…"
-                className="w-full bg-surface-700 border border-white/[0.08] rounded-lg px-3 py-2 text-sm text-ink-100 focus:outline-none focus:border-amber-400/40 mb-1"
+                className={`${INPUT_CLASS} mb-1`}
               />
               <div className="max-h-48 overflow-y-auto">
                 {visibleOptions.map(o => (
@@ -401,26 +615,27 @@ function EditSubscriptionDialog({
                     label={o.label}
                     sublabel={o.sublabel}
                     disabled={busy}
-                    onToggle={() => toggleSelected(o.key)}
+                    onToggle={() => setSelected(prev => toggleIn(prev, o.key))}
                   />
                 ))}
                 {visibleOptions.length === 0 && (
                   <p className="text-xs text-ink-400 px-2 py-2">No matches.</p>
                 )}
               </div>
-              <div className="flex justify-end mt-2">
-                <Button
-                  size="sm"
-                  variant="primary"
-                  onClick={linkSelected}
-                  loading={linkSubs.isPending}
-                  disabled={busy || selected.size === 0}
-                >
-                  Link {selected.size || ''} selected
-                </Button>
-              </div>
-            </>
+            </div>
           )}
+
+          <div className="flex justify-end mt-2">
+            <Button
+              size="sm"
+              variant="primary"
+              onClick={linkSelected}
+              loading={linkSubs.isPending}
+              disabled={busy || keysToLink.length === 0}
+            >
+              Attach {keysToLink.length || ''}
+            </Button>
+          </div>
         </div>
       </div>
     </Modal>
@@ -437,29 +652,14 @@ function AddSubscriptionDialog({
   const createManual = useCreateManualSubscription()
 
   const [name, setName] = useState('')
-  const [search, setSearch] = useState('')
+  const [amount, setAmount] = useState('')
+  // Empty by default so attaching a charge lets detection infer the cadence
+  // rather than silently pinning one.
+  const [cadence, setCadence] = useState<string>('')
+  const [startDate, setStartDate] = useState('')
   const [selected, setSelected] = useState<Set<number>>(new Set())
 
-  const query = useDebouncedValue(search.trim(), 300)
-  const { data: results, isFetching } = useQuery({
-    queryKey: ['transactions', 'sub-search', query],
-    queryFn: () => transactionsApi.list({ search: query, transaction_type: 'debit', limit: 25 }),
-    enabled: query.length >= 2,
-  })
-
-  const selectedIds = useMemo(() => Array.from(selected), [selected])
-  const { data: resolutions } = useResolveMerchantKeys(selectedIds)
-
-  // The subscription tracks merchants, not individual transactions: each
-  // picked transaction resolves to its normalized merchant key, and every
-  // past and future charge under that key counts toward the subscription.
-  const merchantKeys = useMemo(() => {
-    const keys: string[] = []
-    for (const r of resolutions ?? []) {
-      if (!keys.includes(r.merchant_key)) keys.push(r.merchant_key)
-    }
-    return keys
-  }, [resolutions])
+  const merchantKeys = useMerchantKeysFor(selected)
 
   // Attaching a merchant that already belongs to another subscription moves
   // it there — warn so that isn't a surprise.
@@ -472,18 +672,24 @@ function AddSubscriptionDialog({
     return null
   }
 
-  const toggleSelected = (id: number) =>
-    setSelected(prev => {
-      const next = new Set(prev)
-      if (next.has(id)) next.delete(id)
-      else next.add(id)
-      return next
-    })
+  // With charges attached the detector supplies the amount and cadence;
+  // without them, they're the only thing the report has to work from.
+  const parsedAmount = Number(amount)
+  const hasDetail = amount.trim().length > 0 && parsedAmount > 0 && cadence !== ''
+  const canCreate =
+    name.trim().length > 0 &&
+    (merchantKeys.length > 0 || hasDetail) &&
+    !createManual.isPending
 
-  const canCreate = name.trim().length > 0 && merchantKeys.length > 0 && !createManual.isPending
   const create = () =>
     createManual.mutate(
-      { name: name.trim(), merchant_keys: merchantKeys },
+      {
+        name: name.trim(),
+        merchant_keys: merchantKeys,
+        amount: hasDetail ? parsedAmount : undefined,
+        cadence: (cadence || undefined) as SubscriptionCadenceOverride | undefined,
+        start_date: startDate || undefined,
+      },
       { onSuccess: onClose }
     )
 
@@ -491,8 +697,9 @@ function AddSubscriptionDialog({
     <Modal onClose={onClose}>
       <h3 className="text-lg font-medium text-ink-100 mb-1">Add subscription</h3>
       <p className="text-xs text-ink-400 mb-4">
-        Track a recurring charge the detector missed. Pick one of its transactions —
-        the merchant is attached, so future charges count automatically.
+        Track a recurring charge the detector missed — or one with no charges yet. Attaching a
+        transaction is optional; when you do, its merchant comes along so future charges count
+        automatically.
       </p>
 
       <div className="space-y-5">
@@ -503,45 +710,60 @@ function AddSubscriptionDialog({
             onChange={e => setName(e.target.value)}
             placeholder="e.g. Gym membership"
             maxLength={120}
-            className="w-full bg-surface-700 border border-white/[0.08] rounded-lg px-3 py-2 text-sm text-ink-100 focus:outline-none focus:border-amber-400/40"
+            className={INPUT_CLASS}
           />
         </div>
 
-        <div>
-          <label className="label block mb-1.5">Attach transactions</label>
-          <input
-            value={search}
-            onChange={e => setSearch(e.target.value)}
-            placeholder="Search transactions by description or merchant…"
-            className="w-full bg-surface-700 border border-white/[0.08] rounded-lg px-3 py-2 text-sm text-ink-100 focus:outline-none focus:border-amber-400/40 mb-1"
-          />
-          {query.length < 2 ? (
-            <p className="text-xs text-ink-400 px-2 py-2">
-              Type at least 2 characters to search your charges.
-            </p>
-          ) : isFetching && !results ? (
-            <div className="flex justify-center py-3">
-              <Spinner size="sm" />
-            </div>
-          ) : (
-            <div className="max-h-48 overflow-y-auto">
-              {(results ?? []).map(tx => (
-                <CheckboxRow
-                  key={tx.id}
-                  checked={selected.has(tx.id)}
-                  label={tx.merchant_name || tx.description || tx.original_description}
-                  sublabel={`${formatDateShort(tx.date)} · ${formatCurrency(tx.amount)}${
-                    tx.account_name ? ` · ${tx.account_name}` : ''
-                  }`}
-                  disabled={createManual.isPending}
-                  onToggle={() => toggleSelected(tx.id)}
-                />
+        <div className="grid grid-cols-3 gap-2">
+          <div>
+            <label className="label block mb-1.5">Amount</label>
+            <input
+              type="number"
+              step="0.01"
+              min="0"
+              value={amount}
+              onChange={e => setAmount(e.target.value)}
+              placeholder="0.00"
+              className={INPUT_CLASS}
+            />
+          </div>
+          <div>
+            <label className="label block mb-1.5">Cadence</label>
+            <select
+              value={cadence}
+              onChange={e => setCadence(e.target.value)}
+              className={INPUT_CLASS}
+            >
+              <option value="">Auto-detect</option>
+              {CADENCE_OVERRIDE_OPTIONS.map(c => (
+                <option key={c} value={c}>
+                  {CADENCE_LABELS[c]}
+                </option>
               ))}
-              {(results ?? []).length === 0 && (
-                <p className="text-xs text-ink-400 px-2 py-2">No matching charges.</p>
-              )}
-            </div>
-          )}
+            </select>
+          </div>
+          <div>
+            <label className="label block mb-1.5">Next charge</label>
+            <input
+              type="date"
+              value={startDate}
+              onChange={e => setStartDate(e.target.value)}
+              className={INPUT_CLASS}
+            />
+          </div>
+        </div>
+        <p className="text-2xs text-ink-400 -mt-3">
+          Required unless you attach a charge below — then the report measures them from the
+          charges instead, and anything you set here overrides that.
+        </p>
+
+        <div>
+          <label className="label block mb-1.5">Attach transactions (optional)</label>
+          <TransactionPicker
+            selected={selected}
+            onToggle={id => setSelected(prev => toggleIn(prev, id))}
+            disabled={createManual.isPending}
+          />
         </div>
 
         {merchantKeys.length > 0 && (
@@ -603,6 +825,7 @@ export default function SubscriptionsTab() {
   const { data: categories } = useCategories({ expense_only: true })
   const upsertRule = useUpsertSubscriptionRule()
   const deleteRule = useDeleteSubscriptionRule()
+  const deleteManual = useDeleteManualSubscription()
 
   const parents = useMemo(
     () => sortBySortOrder((categories ?? []).filter(c => c.children.length > 0)),
@@ -641,7 +864,7 @@ export default function SubscriptionsTab() {
     )
   }
 
-  const busy = upsertRule.isPending || deleteRule.isPending
+  const busy = upsertRule.isPending || deleteRule.isPending || deleteManual.isPending
 
   const updateFilter = (next: (base: CategoryFilter) => CategoryFilter) => {
     setCategoryFilter(prev => {
@@ -697,6 +920,26 @@ export default function SubscriptionsTab() {
     ? ([...report.subscriptions, ...report.dismissed].find(s => s.merchant_key === editingKey) ??
       null)
     : null
+
+  // A manual entry has no merchant to fall back to, so removing it deletes
+  // the subscription outright rather than just dropping a tracking decision.
+  const rowAction = (item: SubscriptionItem) => {
+    if (item.is_manual_entry) {
+      return {
+        label: 'Delete',
+        onClick: () => item.rule_id != null && deleteManual.mutate(item.rule_id),
+        disabled: busy,
+      }
+    }
+    if (item.is_manual && item.rule_id != null) {
+      return { label: 'Untrack', onClick: () => deleteRule.mutate(item.rule_id!), disabled: busy }
+    }
+    return {
+      label: 'Dismiss',
+      onClick: () => upsertRule.mutate({ merchant_key: item.merchant_key, rule: 'exclude' }),
+      disabled: busy,
+    }
+  }
 
   // Summary values reflect the category filter, so they're recomputed here
   // rather than taken from the server totals.
@@ -841,27 +1084,14 @@ export default function SubscriptionsTab() {
               ? 'No subscriptions match the current filters.'
               : taggedOnly
                 ? 'No transactions categorized as "Subscriptions" in this window. Assign that category to a charge on the Transactions page to always include it here.'
-                : 'No recurring charges detected yet. Subscriptions appear once the same merchant has been charged a few times at a regular interval — import more transaction history to get started.'}
+                : 'No recurring charges detected yet. Subscriptions appear once the same merchant has been charged a few times at a regular interval — import more transaction history, or add one manually.'}
           </p>
         ) : (
           <div className="overflow-x-auto">
             <SubscriptionRows
               items={filteredSubs}
               onEdit={item => setEditingKey(item.merchant_key)}
-              action={item =>
-                item.is_manual && item.rule_id != null
-                  ? {
-                      label: 'Untrack',
-                      onClick: () => deleteRule.mutate(item.rule_id!),
-                      disabled: busy,
-                    }
-                  : {
-                      label: 'Dismiss',
-                      onClick: () =>
-                        upsertRule.mutate({ merchant_key: item.merchant_key, rule: 'exclude' }),
-                      disabled: busy,
-                    }
-              }
+              action={rowAction}
             />
           </div>
         )}
@@ -880,6 +1110,7 @@ export default function SubscriptionsTab() {
             <div className="overflow-x-auto mt-3">
               <SubscriptionRows
                 items={filteredDismissed}
+                onEdit={item => setEditingKey(item.merchant_key)}
                 action={item => ({
                   label: 'Restore',
                   onClick: () => item.rule_id != null && deleteRule.mutate(item.rule_id),

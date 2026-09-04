@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { useQuery, useInfiniteQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { accountsApi, accountTypesApi, balancesApi, transactionsApi, categoriesApi, budgetsApi, reportsApi, subscriptionsApi, importsApi, institutionsApi, demoApi, authApi, type TransactionFilters } from '@/lib/services'
 import { getToken } from '@/lib/api'
-import type { AccountCreate, AccountUpdate, AccountTypeCreate, AccountTypeUpdate, AccountTypeDef, BudgetCreate, BudgetUpdate, TransactionUpdate, TransactionCreate, CategoryCreate, CategoryUpdate, CSVColumnMapping, BalanceSnapshotUpdate, SubscriptionRuleUpsert, SubscriptionNicknameUpsert, SubscriptionLinkRequest, SubscriptionUnlinkRequest, SubscriptionCadenceUpsert, ManualSubscriptionCreate } from '@/types'
+import type { AccountCreate, AccountUpdate, AccountTypeCreate, AccountTypeUpdate, AccountTypeDef, BudgetCreate, BudgetUpdate, TransactionUpdate, TransactionCreate, CategoryCreate, CategoryUpdate, CSVColumnMapping, BalanceSnapshotUpdate, SubscriptionRuleUpsert, SubscriptionNicknameUpsert, SubscriptionLinkRequest, SubscriptionUnlinkRequest, SubscriptionCadenceUpsert, SubscriptionStatusUpsert, ManualSubscriptionCreate, ManualEntryUpdate } from '@/types'
 import { formatAccountType } from '@/lib/format'
 import toast from 'react-hot-toast'
 
@@ -507,6 +507,42 @@ export function useSetSubscriptionCadence() {
     onSuccess: (_, { cadence }) => {
       qc.invalidateQueries({ queryKey: ['reports'] })
       toast.success(cadence ? 'Cadence updated' : 'Cadence reset to auto')
+    },
+    onError: (e: Error) => toast.error(e.message),
+  })
+}
+
+export function useSetSubscriptionStatus() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (data: SubscriptionStatusUpsert) => subscriptionsApi.setStatus(data),
+    onSuccess: (_, { status }) => {
+      qc.invalidateQueries({ queryKey: ['reports'] })
+      toast.success(status ? `Marked ${status}` : 'Status reset to auto')
+    },
+    onError: (e: Error) => toast.error(e.message),
+  })
+}
+
+export function useUpdateManualSubscription() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (data: ManualEntryUpdate) => subscriptionsApi.updateManual(data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['reports'] })
+      toast.success('Subscription updated')
+    },
+    onError: (e: Error) => toast.error(e.message),
+  })
+}
+
+export function useDeleteManualSubscription() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: number) => subscriptionsApi.deleteManual(id),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['reports'] })
+      toast.success('Subscription deleted')
     },
     onError: (e: Error) => toast.error(e.message),
   })

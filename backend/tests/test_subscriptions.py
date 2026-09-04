@@ -6,13 +6,17 @@ from app.models import Account, Category, SubscriptionRule, Transaction, User
 from app.models.enums import TransactionType
 from app.services.subscriptions import (
     build_subscriptions_report,
-    create_manual_subscription,
+    create_manual_entry,
+    delete_manual_entry,
+    is_manual_entry,
     link_merchants,
     normalize_merchant,
     remove_rule,
     set_cadence_override,
     set_nickname,
+    set_status_override,
     unlink_merchant,
+    update_manual_entry,
 )
 
 
@@ -589,15 +593,18 @@ def test_manual_subscription_links_and_names(db):
     old_key, new_key = _drifted_merchant(db, acct, cat)
     db.commit()
 
-    create_manual_subscription(db, user.id, "My Bundle", [new_key, old_key])
+    row = create_manual_entry(db, user.id, "My Bundle", merchant_keys=[new_key, old_key])
     report = build_subscriptions_report(db, user.id)
 
     assert len(report.subscriptions) == 1
     item = report.subscriptions[0]
-    assert item.merchant_key == new_key
+    # The entry owns a synthetic key; both merchants hang off it as links.
+    assert item.merchant_key == row.merchant_key
+    assert is_manual_entry(item.merchant_key)
     assert item.nickname == "My Bundle"
     assert item.is_manual is True
-    assert [m.key for m in item.linked_merchants] == [old_key]
+    assert item.is_manual_entry is True
+    assert {m.key for m in item.linked_merchants} == {old_key, new_key}
     assert item.occurrence_count == 4
     assert report.candidates == []
 
@@ -611,7 +618,7 @@ def test_manual_subscription_single_charge(db):
     # Untracked, a lone untagged charge is invisible.
     assert build_subscriptions_report(db, user.id).subscriptions == []
 
-    create_manual_subscription(db, user.id, "New Service", [key])
+    create_manual_entry(db, user.id, "New Service", merchant_keys=[key])
     report = build_subscriptions_report(db, user.id)
 
     assert len(report.subscriptions) == 1
@@ -619,6 +626,7 @@ def test_manual_subscription_single_charge(db):
     assert item.is_manual is True
     assert item.occurrence_count == 1
     assert item.cadence == "irregular"
+    assert item.last_charged == _days_ago(10).isoformat()
 
 
 def test_manual_subscription_dedupes_keys(db):
@@ -626,11 +634,15 @@ def test_manual_subscription_dedupes_keys(db):
     db.commit()
 
     # A repeated key must not trip link_merchants' self-link guard.
-    row = create_manual_subscription(db, user.id, "Dup", ["spotify", "spotify"])
+    row = create_manual_entry(db, user.id, "Dup", merchant_keys=["spotify", "spotify"])
 
-    assert row.merchant_key == "spotify"
+    assert is_manual_entry(row.merchant_key)
     assert row.rule == "include"
-    assert db.query(SubscriptionRule).count() == 1
+    # The entry itself plus one link row for "spotify".
+    assert db.query(SubscriptionRule).count() == 2
+    assert db.query(SubscriptionRule).filter_by(merchant_key="spotify").one().alias_of == (
+        row.merchant_key
+    )
 
 
 def test_manual_subscription_steals_linked_merchant(db):
@@ -639,15 +651,245 @@ def test_manual_subscription_steals_linked_merchant(db):
     db.commit()
     link_merchants(db, user.id, new_key, [old_key])
 
-    # Making the linked child its own manual subscription detaches it.
-    create_manual_subscription(db, user.id, "Old One", [old_key])
+    # Pulling the linked child into a manual entry re-points it.
+    row = create_manual_entry(db, user.id, "Old One", merchant_keys=[old_key])
 
-    row = db.query(SubscriptionRule).filter_by(merchant_key=old_key).one()
-    assert row.alias_of is None
-    assert row.rule == "include"
-    assert row.nickname == "Old One"
+    child = db.query(SubscriptionRule).filter_by(merchant_key=old_key).one()
+    assert child.alias_of == row.merchant_key
+    assert child.rule is None
     keys = {s.merchant_key for s in build_subscriptions_report(db, user.id).subscriptions}
-    assert old_key in keys
+    assert row.merchant_key in keys
+
+
+# ── Manual entries with no charges ────────────────────────────────────────────
+
+
+def test_manual_entry_without_transactions(db):
+    _, _, user = _setup(db)
+    db.commit()
+
+    create_manual_entry(
+        db, user.id, "Gym", amount=45.0, cadence="monthly", start_date=_days_ago(70)
+    )
+    report = build_subscriptions_report(db, user.id)
+
+    assert len(report.subscriptions) == 1
+    item = report.subscriptions[0]
+    assert item.display_name == "Gym"
+    assert item.is_manual_entry is True
+    assert item.amount == 45.0
+    assert item.cadence == "monthly"
+    assert item.occurrence_count == 0
+    assert item.first_charged is None and item.last_charged is None
+    assert item.monthly_equivalent == 45.0
+    # 70 days back on a ~30-day step rolls forward past today.
+    assert date.fromisoformat(item.next_expected) >= date.today()
+    # Nothing has been charged, so there is no lapse to detect.
+    assert item.status == "active"
+    assert report.total_monthly == 45.0
+    assert report.active_count == 1
+
+
+def test_manual_entry_next_expected_keeps_future_start(db):
+    _, _, user = _setup(db)
+    db.commit()
+    start = date.today() + timedelta(days=12)
+
+    create_manual_entry(db, user.id, "Soon", amount=10.0, cadence="annual", start_date=start)
+    item = build_subscriptions_report(db, user.id).subscriptions[0]
+
+    assert item.next_expected == start.isoformat()
+    assert item.monthly_equivalent == round(10.0 / 12, 2)
+
+
+def test_manual_entry_without_start_date(db):
+    _, _, user = _setup(db)
+    db.commit()
+
+    create_manual_entry(db, user.id, "No Anchor", amount=8.0, cadence="weekly")
+    item = build_subscriptions_report(db, user.id).subscriptions[0]
+
+    assert item.next_expected is None
+    assert item.monthly_equivalent == round(8.0 * 52 / 12, 2)
+
+
+def test_manual_entry_charges_take_over_typed_amount(db):
+    acct, cat, user = _setup(db)
+    for i in range(4):
+        _tx(db, acct, cat, 21.5, TransactionType.DEBIT, _days_ago(30 * i), desc="Real Gym")
+    db.commit()
+    key = normalize_merchant(db.query(Transaction).first())
+
+    row = create_manual_entry(
+        db, user.id, "Gym", amount=45.0, cadence="monthly", start_date=_days_ago(70)
+    )
+    link_merchants(db, user.id, row.merchant_key, [key])
+    item = build_subscriptions_report(db, user.id).subscriptions[0]
+
+    # Real charges win; the typed amount stays available as a fallback.
+    assert item.occurrence_count == 4
+    assert item.amount == 21.5
+    assert item.manual_amount == 45.0
+
+
+def test_manual_entry_survives_emptied_detail(db):
+    _, _, user = _setup(db)
+    db.commit()
+    row = create_manual_entry(db, user.id, "Half", amount=5.0, cadence="monthly")
+
+    # Clearing every optional field must not delete the subscription itself.
+    set_nickname(db, user.id, row.merchant_key, None)
+    update_manual_entry(db, user.id, row.merchant_key, None, None)
+
+    item = build_subscriptions_report(db, user.id).subscriptions[0]
+    assert item.merchant_key == row.merchant_key
+    assert item.amount == 0.0
+    assert item.monthly_equivalent == 0.0
+
+
+def test_manual_entry_cadence_cannot_be_cleared(db):
+    _, _, user = _setup(db)
+    db.commit()
+    row = create_manual_entry(db, user.id, "Gym", amount=45.0, cadence="monthly")
+
+    with pytest.raises(ValueError):
+        set_cadence_override(db, user.id, row.merchant_key, None)
+
+
+def test_manual_entry_update_amount_and_date(db):
+    _, _, user = _setup(db)
+    db.commit()
+    row = create_manual_entry(db, user.id, "Gym", amount=45.0, cadence="monthly")
+
+    assert update_manual_entry(db, user.id, row.merchant_key, 52.5, _days_ago(3)) is True
+    item = build_subscriptions_report(db, user.id).subscriptions[0]
+    assert item.amount == 52.5
+    assert item.manual_start_date == _days_ago(3).isoformat()
+
+
+def test_deleting_manual_entry_releases_its_merchants(db):
+    acct, cat, user = _setup(db)
+    for i in range(6):
+        _tx(db, acct, cat, 15.99, TransactionType.DEBIT, _days_ago(30 * i), desc="Netflix")
+    db.commit()
+    key = normalize_merchant(db.query(Transaction).first())
+
+    row = create_manual_entry(db, user.id, "Bundle", merchant_keys=[key])
+    assert delete_manual_entry(db, user.id, row.id) is True
+
+    # The entry is gone and its merchant detects on its own again — no row
+    # left aliased to a key that no longer exists.
+    assert db.query(SubscriptionRule).count() == 0
+    keys = {s.merchant_key for s in build_subscriptions_report(db, user.id).subscriptions}
+    assert keys == {key}
+
+
+def test_untrack_never_deletes_a_manual_entry(db):
+    _, _, user = _setup(db)
+    db.commit()
+    row = create_manual_entry(db, user.id, "Gym", amount=45.0, cadence="monthly")
+
+    # Untrack/Restore only clears an include/exclude decision; the manual
+    # entry itself is only removed by delete_manual_entry.
+    assert remove_rule(db, user.id, row.id) is True
+    assert db.query(SubscriptionRule).filter_by(id=row.id).one().manual_amount is not None
+    assert len(build_subscriptions_report(db, user.id).subscriptions) == 1
+
+    assert delete_manual_entry(db, user.id, row.id) is True
+    assert db.query(SubscriptionRule).count() == 0
+
+
+def test_delete_manual_entry_rejects_a_plain_rule(db):
+    acct, cat, user = _setup(db)
+    for i in range(6):
+        _tx(db, acct, cat, 15.99, TransactionType.DEBIT, _days_ago(30 * i))
+    db.commit()
+    key = normalize_merchant(db.query(Transaction).first())
+    set_nickname(db, user.id, key, "Movies")
+    row = db.query(SubscriptionRule).filter_by(merchant_key=key).one()
+
+    assert delete_manual_entry(db, user.id, row.id) is False
+    assert db.query(SubscriptionRule).count() == 1
+
+
+def test_manual_entry_hidden_by_tagged_only(db):
+    _, _, user = _setup(db)
+    db.commit()
+    create_manual_entry(db, user.id, "Gym", amount=45.0, cadence="monthly")
+
+    assert build_subscriptions_report(db, user.id, tagged_only=True).subscriptions == []
+
+
+# ── Status overrides ──────────────────────────────────────────────────────────
+
+
+def test_status_override_inactive_drops_out_of_totals(db):
+    acct, cat, user = _setup(db)
+    for i in range(6):
+        _tx(db, acct, cat, 15.99, TransactionType.DEBIT, _days_ago(30 * i))
+    db.commit()
+    key = normalize_merchant(db.query(Transaction).first())
+    assert build_subscriptions_report(db, user.id).subscriptions[0].status == "active"
+
+    set_status_override(db, user.id, key, "inactive")
+    report = build_subscriptions_report(db, user.id)
+
+    item = report.subscriptions[0]
+    # 'inactive' reports as lapsed, so it leaves the active totals for free.
+    assert item.status == "lapsed"
+    assert item.status_override == "inactive"
+    assert report.total_monthly == 0.0
+    assert report.active_count == 0
+    assert report.lapsed_count == 1
+
+
+def test_status_override_active_rescues_a_lapsed_merchant(db):
+    acct, cat, user = _setup(db)
+    for i in range(6):
+        _tx(db, acct, cat, 9.99, TransactionType.DEBIT, _days_ago(200 + 30 * i))
+    db.commit()
+    key = normalize_merchant(db.query(Transaction).first())
+    assert build_subscriptions_report(db, user.id).subscriptions[0].status == "lapsed"
+
+    set_status_override(db, user.id, key, "active")
+    report = build_subscriptions_report(db, user.id)
+
+    assert report.subscriptions[0].status == "active"
+    assert report.active_count == 1
+    assert report.total_monthly == 9.99
+
+
+def test_clearing_status_override_restores_detection(db):
+    acct, cat, user = _setup(db)
+    for i in range(6):
+        _tx(db, acct, cat, 15.99, TransactionType.DEBIT, _days_ago(30 * i))
+    db.commit()
+    key = normalize_merchant(db.query(Transaction).first())
+
+    set_status_override(db, user.id, key, "inactive")
+    set_status_override(db, user.id, key, None)
+
+    item = build_subscriptions_report(db, user.id).subscriptions[0]
+    assert item.status == "active"
+    assert item.status_override is None
+    # The row carried nothing else, so it was cleaned up.
+    assert db.query(SubscriptionRule).count() == 0
+
+
+def test_status_override_survives_alongside_a_nickname(db):
+    acct, cat, user = _setup(db)
+    for i in range(6):
+        _tx(db, acct, cat, 15.99, TransactionType.DEBIT, _days_ago(30 * i))
+    db.commit()
+    key = normalize_merchant(db.query(Transaction).first())
+
+    set_status_override(db, user.id, key, "inactive")
+    set_nickname(db, user.id, key, "Movies")
+    set_status_override(db, user.id, key, None)
+
+    row = db.query(SubscriptionRule).filter_by(merchant_key=key).one()
+    assert row.nickname == "Movies"
+    assert row.status_override is None
 
 
 # ── Cadence overrides ─────────────────────────────────────────────────────────

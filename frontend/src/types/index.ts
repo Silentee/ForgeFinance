@@ -372,6 +372,10 @@ export type SubscriptionCadence =
 // Settable as an override; 'irregular' is only ever derived, never forced.
 export type SubscriptionCadenceOverride = Exclude<SubscriptionCadence, 'irregular'>
 
+// A pinned status. 'inactive' reports as 'lapsed', so it leaves the active
+// totals exactly like a subscription that stopped being charged.
+export type SubscriptionStatusOverride = 'active' | 'inactive'
+
 export interface LinkedMerchant {
   key: string
   display_name: string
@@ -385,13 +389,15 @@ export interface SubscriptionItem {
   cadence: SubscriptionCadence
   cadence_override?: SubscriptionCadenceOverride
   status: 'active' | 'lapsed'
+  status_override?: SubscriptionStatusOverride
   amount: number
   previous_amount?: number
   price_increased: boolean
   price_change_pct?: number
-  first_charged: string
-  last_charged: string
-  next_expected?: string
+  // null on a manual entry with no charges attached
+  first_charged?: string | null
+  last_charged?: string | null
+  next_expected?: string | null
   occurrence_count: number
   monthly_equivalent: number
   annual_equivalent: number
@@ -399,6 +405,9 @@ export interface SubscriptionItem {
   category_id?: number
   category_name?: string
   is_manual: boolean
+  is_manual_entry: boolean
+  manual_amount?: number | null
+  manual_start_date?: string | null
   is_tagged: boolean
   rule_id?: number
   has_duplicates: boolean
@@ -438,6 +447,9 @@ export interface SubscriptionRule {
   nickname?: string
   alias_of?: string
   cadence_override?: SubscriptionCadenceOverride
+  status_override?: SubscriptionStatusOverride
+  manual_amount?: number | null
+  manual_start_date?: string | null
 }
 
 export interface SubscriptionRuleUpsert {
@@ -464,9 +476,25 @@ export interface SubscriptionCadenceUpsert {
   cadence?: SubscriptionCadenceOverride
 }
 
+export interface SubscriptionStatusUpsert {
+  merchant_key: string
+  status?: SubscriptionStatusOverride
+}
+
 export interface ManualSubscriptionCreate {
   name: string
   merchant_keys: string[]
+  // Required when no merchant is attached: with no charges to measure, they
+  // are the only source for the report's math.
+  amount?: number
+  cadence?: SubscriptionCadenceOverride
+  start_date?: string
+}
+
+export interface ManualEntryUpdate {
+  merchant_key: string
+  amount?: number
+  start_date?: string
 }
 
 export interface MerchantKeyResolution {

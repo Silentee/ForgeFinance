@@ -24,6 +24,7 @@ from app.schemas.subscriptions import (
     SubscriptionItem, SubscriptionCandidate, SubscriptionsReport, LinkedMerchantRead,
     SubscriptionRuleUpsert, SubscriptionRuleRead,
     SubscriptionNicknameUpsert, SubscriptionLinkRequest, SubscriptionUnlinkRequest,
-    SubscriptionCadenceUpsert, ManualSubscriptionCreate,
+    SubscriptionCadenceUpsert, SubscriptionStatusUpsert,
+    ManualSubscriptionCreate, ManualEntryUpdate,
     MerchantKeyResolveRequest, MerchantKeyResolution,
 )

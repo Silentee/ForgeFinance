@@ -14,10 +14,16 @@ Transactions categorized as 'Subscriptions' are treated as explicitly
 tagged: their merchant always appears in the report even when detection
 fails (down to a single one-off charge), and `tagged_only` restricts the
 whole report to such transactions.
+
+A manual entry is a subscription the user declared outright rather than one
+found in the data: a rule row on a synthetic 'manual:<hex>' key carrying its
+own amount, cadence, and start date. It reports even with no charges at all,
+and real merchants attach to it through the ordinary alias_of link.
 """
 
 import re
 import statistics
+import uuid
 from collections import Counter, defaultdict
 from datetime import date, timedelta
 from typing import NamedTuple, Optional
@@ -86,6 +92,20 @@ AMOUNT_TOLERANCE_FLOOR = 1.00
 # A subscription is lapsed once the gap since its last charge exceeds
 # 1.5x its observed cadence.
 LAPSED_INTERVAL_FACTOR = 1.5
+
+# Manual entries live on synthetic keys. normalize_merchant strips every
+# character outside [a-z0-9& ], so no transaction can ever produce a key
+# containing ':' — the prefix is an unambiguous marker.
+MANUAL_KEY_PREFIX = "manual:"
+
+
+def is_manual_entry(merchant_key: str) -> bool:
+    """True for a user-declared subscription rather than a detected merchant."""
+    return merchant_key.startswith(MANUAL_KEY_PREFIX)
+
+
+def new_manual_key() -> str:
+    return f"{MANUAL_KEY_PREFIX}{uuid.uuid4().hex[:12]}"
 
 
 def normalize_merchant(tx: Transaction) -> str:
@@ -298,6 +318,9 @@ def _build_item(
     nickname: Optional[str] = None,
     linked_merchants: Optional[list[LinkedMerchantRead]] = None,
     cadence_override: Optional[str] = None,
+    status_override: Optional[str] = None,
+    manual_amount: Optional[float] = None,
+    manual_start_date: Optional[date] = None,
 ) -> SubscriptionItem:
     cadence = g.cadence
     median_interval = g.median_interval
@@ -336,7 +359,12 @@ def _build_item(
         next_expected = None
         lapsed_after_days = max(90.0, 2 * median_interval)
 
-    status = "lapsed" if (today - last_charged).days > lapsed_after_days else "active"
+    # A pinned status wins outright; 'inactive' reports as lapsed so it drops
+    # out of the active totals exactly like a subscription that stopped billing.
+    if status_override is not None:
+        status = "active" if status_override == "active" else "lapsed"
+    else:
+        status = "lapsed" if (today - last_charged).days > lapsed_after_days else "active"
 
     has_duplicates, duplicate_periods = _find_duplicates(
         dates, g.day_counts, cadence if cadence != "irregular" else None
@@ -350,6 +378,7 @@ def _build_item(
         cadence=cadence,
         cadence_override=cadence_override,
         status=status,
+        status_override=status_override,
         amount=round(amount, 2),
         previous_amount=previous_amount,
         price_increased=price_increased,
@@ -364,12 +393,76 @@ def _build_item(
         category_id=g.category_id,
         category_name=g.category_name,
         is_manual=is_manual,
+        is_manual_entry=is_manual_entry(merchant_key),
+        manual_amount=manual_amount,
+        manual_start_date=manual_start_date.isoformat() if manual_start_date else None,
         is_tagged=is_tagged,
         rule_id=rule_id,
         has_duplicates=has_duplicates,
         duplicate_periods=duplicate_periods,
         recent_dates=[d.isoformat() for d in dates[-12:]],
         recent_amounts=[round(a, 2) for a in amounts[-12:]],
+    )
+
+
+def _roll_forward(start: date, cadence: str, today: date) -> date:
+    """First occurrence of a cadence anchored at `start` that is not past."""
+    step = max(1, round(365.25 / CADENCE_BUCKETS[cadence][2]))
+    if start >= today:
+        return start
+    periods = -((start - today).days // step)  # ceil division on a negative gap
+    return start + timedelta(days=step * periods)
+
+
+def _build_manual_item(rule: SubscriptionRule, today: date) -> SubscriptionItem:
+    """Report row for a manual entry with no charges in the window.
+
+    Everything comes from what the user typed. The `or` fallbacks keep a
+    half-filled entry (one whose amount or cadence was cleared) visible and
+    repairable instead of silently dropping it from the report.
+    """
+    amount = round(float(rule.manual_amount), 2) if rule.manual_amount is not None else 0.0
+    cadence = rule.cadence_override or "irregular"
+    monthly_equivalent = (
+        round(amount * CADENCE_BUCKETS[cadence][2] / 12.0, 2)
+        if cadence in CADENCE_BUCKETS
+        else 0.0
+    )
+    next_expected = (
+        _roll_forward(rule.manual_start_date, cadence, today)
+        if rule.manual_start_date is not None and cadence in CADENCE_BUCKETS
+        else None
+    )
+
+    return SubscriptionItem(
+        merchant_key=rule.merchant_key,
+        display_name=rule.nickname or rule.merchant_key,
+        nickname=rule.nickname,
+        linked_merchants=[],
+        cadence=cadence,
+        cadence_override=rule.cadence_override,
+        # Nothing has been charged, so there is no lapse to detect: a manual
+        # entry is active until the user says otherwise.
+        status="lapsed" if rule.status_override == "inactive" else "active",
+        status_override=rule.status_override,
+        amount=amount,
+        first_charged=None,
+        last_charged=None,
+        next_expected=next_expected.isoformat() if next_expected else None,
+        occurrence_count=0,
+        monthly_equivalent=monthly_equivalent,
+        annual_equivalent=round(monthly_equivalent * 12, 2),
+        total_in_window=0.0,
+        is_manual=True,
+        is_manual_entry=True,
+        manual_amount=amount if rule.manual_amount is not None else None,
+        manual_start_date=(
+            rule.manual_start_date.isoformat() if rule.manual_start_date else None
+        ),
+        # A manual entry's row *is* the subscription, so the UI always needs
+        # its id — unlike an override row, which only has one while it holds
+        # an include/exclude decision.
+        rule_id=rule.id,
     )
 
 
@@ -446,6 +539,24 @@ def build_subscriptions_report(
         rule = rules.get(merchant_key)
         nickname = rule.nickname if rule is not None else None
         cadence_override = rule.cadence_override if rule is not None else None
+        # A manual entry's row is the subscription itself, so its id travels
+        # with the item even on the paths where a plain override row has none.
+        row_id = (
+            rule.id if rule is not None and is_manual_entry(merchant_key) else None
+        )
+        # Bundled because every _build_item call below passes all five
+        # user-set fields through unchanged.
+        overrides = dict(
+            nickname=nickname,
+            cadence_override=cadence_override,
+            status_override=rule.status_override if rule is not None else None,
+            manual_amount=(
+                round(float(rule.manual_amount), 2)
+                if rule is not None and rule.manual_amount is not None
+                else None
+            ),
+            manual_start_date=rule.manual_start_date if rule is not None else None,
+        )
         linked_merchants = [
             LinkedMerchantRead(key=k, display_name=_child_display(k))
             for k in sorted(linked_children.get(merchant_key, []))
@@ -472,28 +583,28 @@ def build_subscriptions_report(
             if detected:
                 dismissed.append(
                     _build_item(merchant_key, full, months, False, has_tagged, rule.id, today,
-                                nickname, linked_merchants, cadence_override)
+                                linked_merchants=linked_merchants, **overrides)
                 )
             elif has_tagged:
                 # Tagged but undetected: still restorable from the dismissed list.
                 tagged_stats = _analyze_group(merchant_key, tagged_txs, cat_names)
                 dismissed.append(
                     _build_item(merchant_key, tagged_stats, months, False, True, rule.id, today,
-                                nickname, linked_merchants, cadence_override)
+                                linked_merchants=linked_merchants, **overrides)
                 )
             continue
 
         if rule is not None and rule.rule == "include":
             subscriptions.append(
                 _build_item(merchant_key, full, months, True, has_tagged, rule.id, today,
-                            nickname, linked_merchants, cadence_override)
+                            linked_merchants=linked_merchants, **overrides)
             )
             continue
 
         if detected:
             subscriptions.append(
-                _build_item(merchant_key, full, months, False, has_tagged, None, today,
-                            nickname, linked_merchants, cadence_override)
+                _build_item(merchant_key, full, months, False, has_tagged, row_id, today,
+                            linked_merchants=linked_merchants, **overrides)
             )
         elif has_tagged:
             # Failed detection but the user tagged charges here: force the
@@ -501,8 +612,8 @@ def build_subscriptions_report(
             # spending at the same merchant doesn't pollute the amounts.
             tagged_stats = _analyze_group(merchant_key, tagged_txs, cat_names)
             subscriptions.append(
-                _build_item(merchant_key, tagged_stats, months, False, True, None, today,
-                            nickname, linked_merchants, cadence_override)
+                _build_item(merchant_key, tagged_stats, months, False, True, row_id, today,
+                            linked_merchants=linked_merchants, **overrides)
             )
         elif len(occurrences) >= MIN_OCCURRENCES or (
             cadence in _SPARSE_CADENCES and len(occurrences) >= MIN_OCCURRENCES_SPARSE
@@ -542,6 +653,20 @@ def build_subscriptions_report(
                 )
             )
 
+    # Manual entries with no charges in the window never appear above — the
+    # loop only walks groups built from transactions — so they're emitted
+    # from what the user typed. One that did collect charges (through a
+    # linked merchant) already went through the normal path, since its
+    # include rule carries it past the minimum-occurrence guard.
+    #
+    # Skipped under tagged_only: that mode narrows to transactions
+    # categorized 'Subscriptions', and these have no transactions at all.
+    if not tagged_only:
+        for key, rule in rules.items():
+            if is_manual_entry(key) and key not in groups:
+                target = dismissed if rule.rule == "exclude" else subscriptions
+                target.append(_build_manual_item(rule, today))
+
     subscriptions.sort(key=lambda s: s.monthly_equivalent, reverse=True)
     dismissed.sort(key=lambda s: s.monthly_equivalent, reverse=True)
     candidates.sort(key=lambda c: c.occurrence_count, reverse=True)
@@ -568,19 +693,23 @@ def build_subscriptions_report(
 
 
 def _is_empty_rule(row: SubscriptionRule) -> bool:
+    # Manual entries are never empty: the row *is* the subscription, so it
+    # survives even after its name, cadence, and amount are all cleared.
+    if is_manual_entry(row.merchant_key):
+        return False
     return (
         row.rule is None
         and row.nickname is None
         and row.alias_of is None
         and row.cadence_override is None
+        and row.status_override is None
+        and row.manual_amount is None
+        and row.manual_start_date is None
     )
 
 
-def set_nickname(
-    db: Session, user_id: int, merchant_key: str, nickname: Optional[str]
-) -> None:
-    """Set or clear (nickname=None) the display nickname for a merchant."""
-    row = (
+def _get_rule(db: Session, user_id: int, merchant_key: str) -> Optional[SubscriptionRule]:
+    return (
         db.query(SubscriptionRule)
         .filter(
             SubscriptionRule.user_id == user_id,
@@ -588,6 +717,13 @@ def set_nickname(
         )
         .first()
     )
+
+
+def set_nickname(
+    db: Session, user_id: int, merchant_key: str, nickname: Optional[str]
+) -> None:
+    """Set or clear (nickname=None) the display nickname for a merchant."""
+    row = _get_rule(db, user_id, merchant_key)
     if row is None:
         if nickname is None:
             return
@@ -602,15 +738,15 @@ def set_nickname(
 def set_cadence_override(
     db: Session, user_id: int, merchant_key: str, cadence: Optional[str]
 ) -> None:
-    """Set or clear (cadence=None) the forced billing cadence for a merchant."""
-    row = (
-        db.query(SubscriptionRule)
-        .filter(
-            SubscriptionRule.user_id == user_id,
-            SubscriptionRule.merchant_key == merchant_key,
-        )
-        .first()
-    )
+    """Set or clear (cadence=None) the forced billing cadence for a merchant.
+
+    Raises ValueError when clearing the cadence on a manual entry — it has
+    no charge series to infer one from.
+    """
+    if cadence is None and is_manual_entry(merchant_key):
+        raise ValueError("a manually added subscription needs a cadence")
+
+    row = _get_rule(db, user_id, merchant_key)
     if row is None:
         if cadence is None:
             return
@@ -622,44 +758,86 @@ def set_cadence_override(
     db.commit()
 
 
-def create_manual_subscription(
-    db: Session, user_id: int, name: str, merchant_keys: list[str]
-) -> SubscriptionRule:
-    """Manually track a subscription built from the given merchant keys.
-
-    The first key becomes the canonical merchant: it gets an include rule
-    and the chosen name as its nickname, and is detached from any
-    subscription it was previously linked into. Remaining keys are linked
-    into it (which also clears their own include/exclude rules).
-    """
-    deduped: list[str] = []
-    for key in merchant_keys:
-        if key not in deduped:
-            deduped.append(key)
-    canonical, rest = deduped[0], deduped[1:]
-
-    row = (
-        db.query(SubscriptionRule)
-        .filter(
-            SubscriptionRule.user_id == user_id,
-            SubscriptionRule.merchant_key == canonical,
-        )
-        .first()
-    )
+def set_status_override(
+    db: Session, user_id: int, merchant_key: str, status: Optional[str]
+) -> None:
+    """Pin a merchant's status, or clear it (status=None) back to detection."""
+    row = _get_rule(db, user_id, merchant_key)
     if row is None:
-        row = SubscriptionRule(user_id=user_id, merchant_key=canonical)
-        db.add(row)
-    row.rule = "include"
-    row.nickname = name
-    row.alias_of = None
-    # Committed before linking so link_merchants resolves the canonical key
-    # to itself as the root.
+        if status is None:
+            return
+        db.add(SubscriptionRule(user_id=user_id, merchant_key=merchant_key, status_override=status))
+    else:
+        row.status_override = status
+        if _is_empty_rule(row):
+            db.delete(row)
     db.commit()
 
-    if rest:
-        link_merchants(db, user_id, canonical, rest)
+
+def create_manual_entry(
+    db: Session,
+    user_id: int,
+    name: str,
+    amount: Optional[float] = None,
+    cadence: Optional[str] = None,
+    start_date: Optional[date] = None,
+    merchant_keys: Optional[list[str]] = None,
+) -> SubscriptionRule:
+    """Create a manually tracked subscription.
+
+    The row always owns a fresh synthetic merchant key, so the subscription
+    keeps a stable identity no matter which merchants come and go: every
+    key in merchant_keys is linked into it (which also clears each key's own
+    include/exclude rule) and can later be unlinked without destroying it.
+
+    amount/cadence/start_date are what the report falls back to while no
+    charges are attached; once they are, real charge data takes over.
+    """
+    row = SubscriptionRule(
+        user_id=user_id,
+        merchant_key=new_manual_key(),
+        rule="include",
+        nickname=name,
+        cadence_override=cadence,
+        manual_amount=amount,
+        manual_start_date=start_date,
+    )
+    db.add(row)
+    # Committed before linking so link_merchants resolves the new key to
+    # itself as the root.
+    db.commit()
+
+    deduped: list[str] = []
+    for key in merchant_keys or []:
+        if key not in deduped:
+            deduped.append(key)
+    if deduped:
+        link_merchants(db, user_id, row.merchant_key, deduped)
     db.refresh(row)
     return row
+
+
+def update_manual_entry(
+    db: Session,
+    user_id: int,
+    merchant_key: str,
+    amount: Optional[float],
+    start_date: Optional[date],
+) -> bool:
+    """Replace a manual entry's amount and billing anchor.
+
+    Both fields are replaced outright, so passing None clears one. Returns
+    False when no such manual entry exists for the user.
+    """
+    if not is_manual_entry(merchant_key):
+        raise ValueError("not a manually added subscription")
+    row = _get_rule(db, user_id, merchant_key)
+    if row is None:
+        return False
+    row.manual_amount = amount
+    row.manual_start_date = start_date
+    db.commit()
+    return True
 
 
 def link_merchants(
@@ -699,14 +877,7 @@ def link_merchants(
 
 def unlink_merchant(db: Session, user_id: int, merchant_key: str) -> None:
     """Detach a merchant key from the subscription it was linked into."""
-    row = (
-        db.query(SubscriptionRule)
-        .filter(
-            SubscriptionRule.user_id == user_id,
-            SubscriptionRule.merchant_key == merchant_key,
-        )
-        .first()
-    )
+    row = _get_rule(db, user_id, merchant_key)
     if row is None or row.alias_of is None:
         return
     row.alias_of = None
@@ -719,8 +890,10 @@ def remove_rule(db: Session, user_id: int, rule_id: int) -> bool:
     """Drop the include/exclude decision behind Untrack/Restore.
 
     The row itself survives when it also carries a nickname or link, so
-    restoring a dismissed merchant doesn't wipe those. Returns False when
-    no such rule exists for the user.
+    restoring a dismissed merchant doesn't wipe those. A manual entry always
+    survives (see _is_empty_rule) — deleting one is delete_manual_entry.
+
+    Returns False when no such rule exists for the user.
     """
     row = (
         db.query(SubscriptionRule)
@@ -732,5 +905,40 @@ def remove_rule(db: Session, user_id: int, rule_id: int) -> bool:
     row.rule = None
     if _is_empty_rule(row):
         db.delete(row)
+    db.commit()
+    return True
+
+
+def delete_manual_entry(db: Session, user_id: int, rule_id: int) -> bool:
+    """Delete a manual entry outright.
+
+    Unlike a detected merchant there is nothing behind it to fall back to,
+    so the row goes. Its attached merchants are detached first — an alias
+    pointing at a deleted key would strand their charges under a merchant
+    that no longer exists — and return to ordinary detection.
+
+    Returns False when the id isn't a manual entry belonging to the user.
+    """
+    row = (
+        db.query(SubscriptionRule)
+        .filter(SubscriptionRule.id == rule_id, SubscriptionRule.user_id == user_id)
+        .first()
+    )
+    if row is None or not is_manual_entry(row.merchant_key):
+        return False
+
+    children = (
+        db.query(SubscriptionRule)
+        .filter(
+            SubscriptionRule.user_id == user_id,
+            SubscriptionRule.alias_of == row.merchant_key,
+        )
+        .all()
+    )
+    for child in children:
+        child.alias_of = None
+        if _is_empty_rule(child):
+            db.delete(child)
+    db.delete(row)
     db.commit()
     return True

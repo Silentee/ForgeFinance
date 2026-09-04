@@ -1,8 +1,10 @@
 """
 Pydantic schemas for the subscription report and its per-merchant
-override rules (include/exclude, nicknames, and linked merchant keys).
+override rules (include/exclude, nicknames, linked merchant keys, forced
+cadence/status, and manually entered subscriptions).
 """
 
+from datetime import date
 from typing import Literal, Optional
 
 from pydantic import BaseModel, field_validator, model_validator
@@ -10,6 +12,9 @@ from pydantic import BaseModel, field_validator, model_validator
 Cadence = Literal["weekly", "biweekly", "monthly", "quarterly", "semiannual", "annual", "irregular"]
 # Settable as an override; "irregular" is only ever derived, never forced.
 CadenceOverride = Literal["weekly", "biweekly", "monthly", "quarterly", "semiannual", "annual"]
+# A pinned status. 'inactive' reports as "lapsed" — it drops out of the
+# active totals exactly like a subscription that stopped being charged.
+StatusOverride = Literal["active", "inactive"]
 
 
 class LinkedMerchantRead(BaseModel):
@@ -25,12 +30,13 @@ class SubscriptionItem(BaseModel):
     cadence: Cadence
     cadence_override: Optional[CadenceOverride] = None  # set when cadence was user-forced
     status: Literal["active", "lapsed"]
+    status_override: Optional[StatusOverride] = None    # set when status was user-pinned
     amount: float                        # latest charge
     previous_amount: Optional[float] = None
     price_increased: bool = False
     price_change_pct: Optional[float] = None
-    first_charged: str                   # ISO dates
-    last_charged: str
+    first_charged: Optional[str] = None  # ISO dates; None on a manual entry with no charges
+    last_charged: Optional[str] = None
     next_expected: Optional[str] = None
     occurrence_count: int
     monthly_equivalent: float
@@ -39,6 +45,9 @@ class SubscriptionItem(BaseModel):
     category_id: Optional[int] = None    # dominant category across the group
     category_name: Optional[str] = None
     is_manual: bool = False              # forced in by an 'include' rule
+    is_manual_entry: bool = False        # user-declared subscription, not a detected merchant
+    manual_amount: Optional[float] = None    # manual-entry cost, used while no charges are linked
+    manual_start_date: Optional[str] = None  # manual-entry billing anchor (ISO date)
     is_tagged: bool = False              # has transactions categorized as 'Subscriptions'
     rule_id: Optional[int] = None        # set when an include/exclude rule exists
     has_duplicates: bool = False         # charged more often than the cadence implies
@@ -66,7 +75,7 @@ class SubscriptionsReport(BaseModel):
     total_monthly: float                 # active subscriptions only
     total_annual: float
     active_count: int
-    lapsed_count: int
+    lapsed_count: int                    # includes subscriptions pinned inactive
     price_increase_count: int
     subscriptions: list[SubscriptionItem]
     dismissed: list[SubscriptionItem]
@@ -78,6 +87,14 @@ def _require_merchant_key(v: str) -> str:
     if not v:
         raise ValueError("merchant_key must not be empty")
     return v
+
+
+def _require_positive_amount(v: Optional[float]) -> Optional[float]:
+    if v is None:
+        return None
+    if v <= 0:
+        raise ValueError("amount must be greater than zero")
+    return round(v, 2)
 
 
 class SubscriptionRuleUpsert(BaseModel):
@@ -136,14 +153,30 @@ class SubscriptionCadenceUpsert(BaseModel):
     merchant_key_not_empty = field_validator("merchant_key")(_require_merchant_key)
 
 
-class ManualSubscriptionCreate(BaseModel):
-    """Manually track a subscription: name it and attach merchant keys.
+class SubscriptionStatusUpsert(BaseModel):
+    merchant_key: str
+    status: Optional[StatusOverride] = None  # None returns the row to auto-detection
 
-    The first key becomes the canonical merchant (include rule + nickname);
-    the rest are linked into it.
+    merchant_key_not_empty = field_validator("merchant_key")(_require_merchant_key)
+
+
+class ManualSubscriptionCreate(BaseModel):
+    """Create a manually tracked subscription.
+
+    The row is always its own canonical 'manual:<hex>' merchant key, so it
+    keeps a stable identity even when every attached merchant is later
+    unlinked. Any merchant_keys picked off transactions are linked into it.
+
+    amount and cadence are required when no merchant is attached — with no
+    charges to measure, they are the only source for the report's math.
     """
     name: str
-    merchant_keys: list[str]
+    merchant_keys: list[str] = []
+    amount: Optional[float] = None
+    cadence: Optional[CadenceOverride] = None
+    start_date: Optional[date] = None
+
+    amount_positive = field_validator("amount")(_require_positive_amount)
 
     @field_validator("name")
     @classmethod
@@ -155,11 +188,27 @@ class ManualSubscriptionCreate(BaseModel):
 
     @field_validator("merchant_keys")
     @classmethod
-    def keys_not_empty(cls, v: list[str]) -> list[str]:
-        v = [_require_merchant_key(k) for k in v]
-        if not v:
-            raise ValueError("merchant_keys must not be empty")
-        return v
+    def keys_valid(cls, v: list[str]) -> list[str]:
+        return [_require_merchant_key(k) for k in v]
+
+    @model_validator(mode="after")
+    def detail_required_without_merchants(self) -> "ManualSubscriptionCreate":
+        if not self.merchant_keys and (self.amount is None or self.cadence is None):
+            raise ValueError("amount and cadence are required when no transaction is attached")
+        return self
+
+
+class ManualEntryUpdate(BaseModel):
+    """Replace a manual entry's amount and billing anchor.
+
+    Both fields always apply, so omitting one clears it.
+    """
+    merchant_key: str
+    amount: Optional[float] = None
+    start_date: Optional[date] = None
+
+    merchant_key_not_empty = field_validator("merchant_key")(_require_merchant_key)
+    amount_positive = field_validator("amount")(_require_positive_amount)
 
 
 class MerchantKeyResolveRequest(BaseModel):
@@ -185,5 +234,8 @@ class SubscriptionRuleRead(BaseModel):
     nickname: Optional[str] = None
     alias_of: Optional[str] = None
     cadence_override: Optional[CadenceOverride] = None
+    status_override: Optional[StatusOverride] = None
+    manual_amount: Optional[float] = None
+    manual_start_date: Optional[date] = None
 
     model_config = {"from_attributes": True}
