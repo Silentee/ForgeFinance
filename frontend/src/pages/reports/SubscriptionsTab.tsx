@@ -78,20 +78,23 @@ const displayName = (x: { nickname?: string; display_name: string }) =>
 const dateOrDash = (iso?: string | null) => (iso ? formatDateShort(iso) : '—')
 
 function StatusBadge({ item }: { item: SubscriptionItem }) {
-  // A pinned 'inactive' reports as lapsed, so the badge stays two-valued;
-  // the tooltip is what tells you the value was set by hand.
-  const pinned = item.status_override
+  // A pinned 'inactive' still reports as lapsed from the API — only the label
+  // separates the two, since one is a decision and the other a detection
+  // result. Both are amber: neither counts toward the recurring totals.
+  const isInactive = item.status_override === 'inactive'
   return (
     <span
-      title={pinned ? `Manually set to ${pinned}` : undefined}
+      // 'Inactive' can only come from an override, so it says so already; a
+      // pinned 'Active' is indistinguishable from a detected one without this.
+      title={item.status_override === 'active' ? 'Manually set to active' : undefined}
       className={clsx(
         'inline-block rounded-full px-2 py-0.5 text-2xs font-medium',
-        item.status === 'active'
+        item.status === 'active' && !isInactive
           ? 'bg-teal-400/10 text-teal-400'
           : 'bg-amber-400/10 text-amber-400'
       )}
     >
-      {item.status === 'active' ? 'Active' : 'Lapsed'}
+      {isInactive ? 'Inactive' : item.status === 'active' ? 'Active' : 'Lapsed'}
     </span>
   )
 }
@@ -946,7 +949,10 @@ export default function SubscriptionsTab() {
   const activeSubs = filteredSubs.filter(s => s.status === 'active')
   const totalMonthly = activeSubs.reduce((sum, s) => sum + s.monthly_equivalent, 0)
   const totalAnnual = activeSubs.reduce((sum, s) => sum + s.annual_equivalent, 0)
-  const lapsedCount = filteredSubs.length - activeSubs.length
+  // Split the same way the badge is: a hand-pinned 'inactive' isn't a lapse.
+  const nonActive = filteredSubs.filter(s => s.status !== 'active')
+  const inactiveCount = nonActive.filter(s => s.status_override === 'inactive').length
+  const lapsedCount = nonActive.length - inactiveCount
   const priceIncreaseCount = filteredSubs.filter(s => s.price_increased).length
 
   return (
@@ -1066,10 +1072,13 @@ export default function SubscriptionsTab() {
             {lapsedCount > 0 && (
               <span className="text-amber-400">{lapsedCount} lapsed</span>
             )}
+            {inactiveCount > 0 && (
+              <span className="text-amber-400">{inactiveCount} inactive</span>
+            )}
             {priceIncreaseCount > 0 && (
               <span className="text-rose-400">{priceIncreaseCount} price increase{priceIncreaseCount > 1 ? 's' : ''}</span>
             )}
-            {lapsedCount === 0 && priceIncreaseCount === 0 && (
+            {lapsedCount === 0 && inactiveCount === 0 && priceIncreaseCount === 0 && (
               <span className="text-ink-300">no lapses or price increases</span>
             )}
           </div>
