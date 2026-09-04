@@ -28,6 +28,7 @@ import {
 import type { TimeAgoUnit } from '@/lib/format'
 import type {
   SubscriptionCadence,
+  SubscriptionCadenceBuiltin,
   SubscriptionCadenceOverride,
   SubscriptionItem,
   SubscriptionStatusOverride,
@@ -35,7 +36,32 @@ import type {
 } from '@/types'
 import clsx from 'clsx'
 
-const CADENCE_LABELS: Record<SubscriptionCadence, string> = {
+// A user-set interval the builtins can't express, e.g. 'every:6:weeks'.
+const CUSTOM_CADENCE_RE = /^every:([1-9]\d?):(weeks|months)$/
+
+type CadenceUnit = 'weeks' | 'months'
+
+function parseCustomCadence(cadence: string): { n: number; unit: CadenceUnit } | null {
+  const m = CUSTOM_CADENCE_RE.exec(cadence)
+  return m ? { n: Number(m[1]), unit: m[2] as CadenceUnit } : null
+}
+
+// Mirrors _CUSTOM_EQUIVALENTS in backend/app/schemas/subscriptions.py: an
+// interval that lands on a builtin one *is* that builtin, so both ends agree on
+// one spelling and "unsaved changes" stays honest after the server canonicalizes.
+const CUSTOM_EQUIVALENTS: Record<string, SubscriptionCadenceOverride> = {
+  '1:weeks': 'weekly',
+  '2:weeks': 'biweekly',
+  '1:months': 'monthly',
+  '3:months': 'quarterly',
+  '6:months': 'semiannual',
+  '12:months': 'annual',
+}
+
+const encodeCadence = (n: number, unit: CadenceUnit): SubscriptionCadenceOverride =>
+  CUSTOM_EQUIVALENTS[`${n}:${unit}`] ?? (`every:${n}:${unit}` as SubscriptionCadenceOverride)
+
+const BUILTIN_CADENCE_LABELS: Record<SubscriptionCadenceBuiltin, string> = {
   weekly: 'Weekly',
   biweekly: 'Every 2 weeks',
   monthly: 'Monthly',
@@ -45,9 +71,22 @@ const CADENCE_LABELS: Record<SubscriptionCadence, string> = {
   irregular: 'Irregular',
 }
 
+// A function rather than a Record: the cadence union is open-ended now, so
+// a fixed key set can't index it.
+function cadenceLabel(cadence: string): string {
+  const custom = parseCustomCadence(cadence)
+  if (custom) {
+    const noun = custom.unit === 'weeks' ? 'week' : 'month'
+    return custom.n === 1 ? `Every ${noun}` : `Every ${custom.n} ${noun}s`
+  }
+  // Fall back to the raw value rather than rendering nothing for a cadence
+  // this build doesn't know about.
+  return BUILTIN_CADENCE_LABELS[cadence as SubscriptionCadenceBuiltin] ?? cadence
+}
+
 // The unit a price change reads best in: a weekly plan's increase is "6 weeks
 // ago", not "1 month ago". Irregular has no cadence to borrow, so use months.
-const CADENCE_AGO_UNIT: Record<SubscriptionCadence, TimeAgoUnit> = {
+const BUILTIN_AGO_UNIT: Record<SubscriptionCadenceBuiltin, TimeAgoUnit> = {
   weekly: 'week',
   biweekly: 'week',
   monthly: 'month',
@@ -57,10 +96,17 @@ const CADENCE_AGO_UNIT: Record<SubscriptionCadence, TimeAgoUnit> = {
   irregular: 'month',
 }
 
+const cadenceAgoUnit = (cadence: string): TimeAgoUnit =>
+  parseCustomCadence(cadence)?.unit === 'weeks'
+    ? 'week'
+    : BUILTIN_AGO_UNIT[cadence as SubscriptionCadenceBuiltin] ?? 'month'
+
 // 'irregular' is only ever derived by detection, never settable as an override.
 const CADENCE_OVERRIDE_OPTIONS: SubscriptionCadenceOverride[] = [
   'weekly', 'biweekly', 'monthly', 'quarterly', 'semiannual', 'annual',
 ]
+
+const CADENCE_CUSTOM_MODE = 'custom'
 
 const STATUS_OVERRIDE_OPTIONS: { value: SubscriptionStatusOverride; label: string }[] = [
   { value: 'active', label: 'Active' },
@@ -186,11 +232,11 @@ function SubscriptionRows({
                   <div className="text-2xs text-rose-400 whitespace-nowrap">
                     ↑ from {formatCurrency(item.previous_amount)}
                     {item.price_increased_on &&
-                      ` · ${formatTimeAgo(item.price_increased_on, CADENCE_AGO_UNIT[item.cadence])}`}
+                      ` · ${formatTimeAgo(item.price_increased_on, cadenceAgoUnit(item.cadence))}`}
                   </div>
                 )}
               </td>
-              <td className="py-2.5 pr-3 text-ink-200">{CADENCE_LABELS[item.cadence]}</td>
+              <td className="py-2.5 pr-3 text-ink-200">{cadenceLabel(item.cadence)}</td>
               <td className="py-2.5 pr-3 text-ink-200">{dateOrDash(item.last_charged)}</td>
               <td className="py-2.5 pr-3 text-ink-200">{dateOrDash(item.next_expected)}</td>
               <td className="py-2.5 pr-3 text-right font-mono text-ink-100">
@@ -303,6 +349,100 @@ const toggleIn = <T,>(prev: Set<T>, value: T) => {
   return next
 }
 
+/** Cadence select, plus an interval + unit pair when "Custom…" is chosen.
+ *
+ *  Emits the wire value: '' for auto-detect, a builtin name, or an encoded
+ *  'every:<n>:<weeks|months>' — canonicalized, so 1 / months emits 'monthly'.
+ *  Emits null while a custom cadence is half-typed, so the caller can hold its
+ *  Save button until the value means something.
+ *
+ *  Lays out as a single column (select on top, custom row beneath), which fits
+ *  both the edit dialog's flex row and the add dialog's grid cell.
+ */
+function CadencePicker({
+  value,
+  onChange,
+  allowAuto = true,
+  disabled,
+  className,
+}: {
+  value: string
+  onChange: (next: string | null) => void
+  allowAuto?: boolean
+  disabled?: boolean
+  className?: string
+}) {
+  const seeded = parseCustomCadence(value)
+  // Seeded once, then owned locally: re-deriving `mode` from `value` would snap
+  // the select back to "Monthly" the moment someone types the 1 of 12.
+  const [mode, setMode] = useState(seeded ? CADENCE_CUSTOM_MODE : value)
+  const [intervalText, setIntervalText] = useState(seeded ? String(seeded.n) : '')
+  const [unit, setUnit] = useState<CadenceUnit>(seeded?.unit ?? 'months')
+
+  const emit = (nextMode: string, nextInterval: string, nextUnit: CadenceUnit) => {
+    if (nextMode !== CADENCE_CUSTOM_MODE) return onChange(nextMode)
+    const n = Number(nextInterval)
+    if (!Number.isInteger(n) || n < 1 || n > 99) return onChange(null)
+    onChange(encodeCadence(n, nextUnit))
+  }
+
+  return (
+    <div className={className}>
+      <select
+        value={mode}
+        disabled={disabled}
+        onChange={e => {
+          setMode(e.target.value)
+          emit(e.target.value, intervalText, unit)
+        }}
+        className={INPUT_CLASS}
+      >
+        {allowAuto && <option value="">Auto-detect</option>}
+        {CADENCE_OVERRIDE_OPTIONS.map(c => (
+          <option key={c} value={c}>
+            {cadenceLabel(c)}
+          </option>
+        ))}
+        <option value={CADENCE_CUSTOM_MODE}>Custom…</option>
+      </select>
+      {mode === CADENCE_CUSTOM_MODE && (
+        <div className="flex gap-2 mt-1.5">
+          <div className="w-16 shrink-0">
+            <input
+              type="number"
+              min={1}
+              max={99}
+              step={1}
+              value={intervalText}
+              disabled={disabled}
+              placeholder="6"
+              aria-label="Cadence intervalText"
+              onChange={e => {
+                setIntervalText(e.target.value)
+                emit(mode, e.target.value, unit)
+              }}
+              className={INPUT_CLASS}
+            />
+          </div>
+          <select
+            value={unit}
+            disabled={disabled}
+            aria-label="Cadence unit"
+            onChange={e => {
+              setUnit(e.target.value as CadenceUnit)
+              emit(mode, intervalText, e.target.value as CadenceUnit)
+            }}
+            className={`${INPUT_CLASS} min-w-0 flex-1`}
+          >
+            <option value="weeks">weeks</option>
+            <option value="months">months</option>
+          </select>
+        </div>
+      )}
+    </div>
+  )
+}
+
 function EditSubscriptionDialog({
   item,
   report,
@@ -320,7 +460,8 @@ function EditSubscriptionDialog({
   const unlinkSub = useUnlinkSubscription()
 
   const [nickname, setNicknameText] = useState(item.nickname ?? '')
-  const [cadence, setCadenceValue] = useState<string>(item.cadence_override ?? '')
+  // null while a custom cadence is half-typed — not saveable, not 'auto'.
+  const [cadence, setCadenceValue] = useState<string | null>(item.cadence_override ?? '')
   const [statusValue, setStatusValue] = useState<string>(item.status_override ?? '')
   const [amount, setAmount] = useState(
     item.manual_amount != null ? String(item.manual_amount) : ''
@@ -348,7 +489,7 @@ function EditSubscriptionDialog({
         .map(s => ({
           key: s.merchant_key,
           label: displayName(s),
-          sublabel: `${formatCurrency(s.amount)} · ${CADENCE_LABELS[s.cadence]}`,
+          sublabel: `${formatCurrency(s.amount)} · ${cadenceLabel(s.cadence)}`,
         })),
       ...report.candidates
         .filter(c => c.merchant_key !== item.merchant_key)
@@ -383,7 +524,7 @@ function EditSubscriptionDialog({
     })
   }
 
-  const cadenceDirty = cadence !== (item.cadence_override ?? '')
+  const cadenceDirty = cadence !== null && cadence !== (item.cadence_override ?? '')
   const saveCadence = () => {
     if (!cadenceDirty) return
     setCadence.mutate({
@@ -491,21 +632,18 @@ function EditSubscriptionDialog({
 
         <div>
           <label className="label block mb-1.5">Cadence</label>
-          <div className="flex gap-2">
-            <select
-              value={cadence}
-              onChange={e => setCadenceValue(e.target.value)}
-              className={`min-w-0 flex-1 ${INPUT_CLASS}`}
-            >
-              {/* A manual entry has no charge series to infer a cadence from,
-                  so it must keep one. */}
-              {!item.is_manual_entry && <option value="">Auto-detect</option>}
-              {CADENCE_OVERRIDE_OPTIONS.map(c => (
-                <option key={c} value={c}>
-                  {CADENCE_LABELS[c]}
-                </option>
-              ))}
-            </select>
+          {/* items-start so Save stays on the select's line when the custom
+              interval row appears beneath it. */}
+          <div className="flex gap-2 items-start">
+            <CadencePicker
+              value={cadence ?? ''}
+              onChange={setCadenceValue}
+              // A manual entry has no charge series to infer a cadence from,
+              // so it must keep one.
+              allowAuto={!item.is_manual_entry}
+              disabled={busy}
+              className="min-w-0 flex-1"
+            />
             <Button
               size="sm"
               onClick={saveCadence}
@@ -517,7 +655,8 @@ function EditSubscriptionDialog({
           </div>
           <p className="text-2xs text-ink-400 mt-1">
             Overrides the detected billing interval — affects monthly cost, next-expected
-            date, lapse detection, and duplicate warnings.
+            date, lapse detection, and duplicate warnings. Custom covers intervals the
+            presets miss, like every 6 weeks.
           </p>
         </div>
 
@@ -673,7 +812,7 @@ function AddSubscriptionDialog({
   const [amount, setAmount] = useState('')
   // Empty by default so attaching a charge lets detection infer the cadence
   // rather than silently pinning one.
-  const [cadence, setCadence] = useState<string>('')
+  const [cadence, setCadence] = useState<string | null>('')
   const [startDate, setStartDate] = useState('')
   const [selected, setSelected] = useState<Set<number>>(new Set())
 
@@ -693,9 +832,12 @@ function AddSubscriptionDialog({
   // With charges attached the detector supplies the amount and cadence;
   // without them, they're the only thing the report has to work from.
   const parsedAmount = Number(amount)
-  const hasDetail = amount.trim().length > 0 && parsedAmount > 0 && cadence !== ''
+  const hasDetail = amount.trim().length > 0 && parsedAmount > 0 && !!cadence
   const canCreate =
     name.trim().length > 0 &&
+    // A half-typed custom cadence is not 'auto': without this it would submit
+    // as auto-detect with an amount attached.
+    cadence !== null &&
     (merchantKeys.length > 0 || hasDetail) &&
     !createManual.isPending
 
@@ -747,18 +889,7 @@ function AddSubscriptionDialog({
           </div>
           <div>
             <label className="label block mb-1.5">Cadence</label>
-            <select
-              value={cadence}
-              onChange={e => setCadence(e.target.value)}
-              className={INPUT_CLASS}
-            >
-              <option value="">Auto-detect</option>
-              {CADENCE_OVERRIDE_OPTIONS.map(c => (
-                <option key={c} value={c}>
-                  {CADENCE_LABELS[c]}
-                </option>
-              ))}
-            </select>
+            <CadencePicker value={cadence ?? ''} onChange={setCadence} />
           </div>
           <div>
             <label className="label block mb-1.5">Next charge</label>

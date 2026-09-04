@@ -1,9 +1,11 @@
 from datetime import date, timedelta
 
 import pytest
+from pydantic import ValidationError
 
 from app.models import Account, Category, SubscriptionRule, Transaction, User
 from app.models.enums import TransactionType
+from app.schemas.subscriptions import SubscriptionCadenceUpsert, SubscriptionItem
 from app.services.subscriptions import (
     build_subscriptions_report,
     create_manual_entry,
@@ -1063,3 +1065,253 @@ def test_regular_series_not_flagged(db):
     item = report.subscriptions[0]
     assert item.has_duplicates is False
     assert item.duplicate_periods == []
+
+
+# ── Custom cadences ("every:<n>:<weeks|months>") ──────────────────────────────
+
+
+def _irregular_series(db, amount=25.0, desc="Odd Charge"):
+    """A series no cadence bucket matches — gaps of 20, 45, and 70 days."""
+    acct, cat, user = _setup(db)
+    for days in (135, 115, 70, 0):
+        _tx(db, acct, cat, amount, TransactionType.DEBIT, _days_ago(days), desc=desc)
+    db.flush()
+    key = normalize_merchant(db.query(Transaction).first())
+    db.add(SubscriptionRule(user_id=user.id, merchant_key=key, rule="include"))
+    db.commit()
+    return user, key
+
+
+def test_custom_cadence_override_math(db):
+    user, key = _irregular_series(db)
+    set_cadence_override(db, user.id, key, "every:6:weeks")
+
+    item = build_subscriptions_report(db, user.id).subscriptions[0]
+
+    assert item.cadence == "every:6:weeks"
+    assert item.cadence_override == "every:6:weeks"
+    # 42 nominal days -> 365.25/42 charges a year.
+    assert item.monthly_equivalent == round(25.0 * (365.25 / 42) / 12, 2)
+    assert item.annual_equivalent == round(item.monthly_equivalent * 12, 2)
+    # Next-expected uses the nominal interval, not the observed median.
+    assert item.next_expected == (date.today() + timedelta(days=42)).isoformat()
+
+
+def test_custom_cadence_in_months_uses_average_month(db):
+    user, key = _irregular_series(db)
+    set_cadence_override(db, user.id, key, "every:2:months")
+
+    item = build_subscriptions_report(db, user.id).subscriptions[0]
+
+    # A month is 365.25/12 days, so two months is exactly 6 charges a year.
+    assert item.monthly_equivalent == 12.5
+    assert item.next_expected == (date.today() + timedelta(days=61)).isoformat()
+
+
+def test_custom_cadence_lapse_uses_nominal_interval(db):
+    acct, cat, user = _setup(db)
+    # Quarterly-looking series whose last charge was 60 days ago.
+    for days in (240, 150, 60):
+        _tx(db, acct, cat, 30.0, TransactionType.DEBIT, _days_ago(days), desc="Box Club")
+    db.flush()
+    key = normalize_merchant(db.query(Transaction).first())
+    db.commit()
+
+    # Lapses after 1.5 x 42 = 63 days, so a 60-day gap is still active...
+    set_cadence_override(db, user.id, key, "every:6:weeks")
+    assert build_subscriptions_report(db, user.id).subscriptions[0].status == "active"
+
+    # ...but 1.5 x 35 = 52.5 days is not.
+    set_cadence_override(db, user.id, key, "every:5:weeks")
+    assert build_subscriptions_report(db, user.id).subscriptions[0].status == "lapsed"
+
+
+@pytest.mark.parametrize(
+    "custom,builtin",
+    [
+        ("every:1:weeks", "weekly"),
+        ("every:2:weeks", "biweekly"),
+        ("every:1:months", "monthly"),
+        ("every:3:months", "quarterly"),
+        ("every:6:months", "semiannual"),
+        ("every:12:months", "annual"),
+    ],
+)
+def test_custom_cadence_collapses_onto_builtin(db, custom, builtin):
+    _, _, user = _setup(db)
+    db.commit()
+
+    # One spelling per interval: otherwise duplicate detection would take the
+    # calendar-period path for 'monthly' and the interval path for its twin.
+    set_cadence_override(db, user.id, "spotify", custom)
+
+    row = db.query(SubscriptionRule).filter_by(merchant_key="spotify").one()
+    assert row.cadence_override == builtin
+
+
+def test_unusable_cadence_rejected(db):
+    _, _, user = _setup(db)
+    db.commit()
+
+    with pytest.raises(ValueError):
+        set_cadence_override(db, user.id, "spotify", "every:6:days")
+    assert db.query(SubscriptionRule).count() == 0
+
+
+def test_clear_custom_cadence_override_deletes_bare_row(db):
+    _, _, user = _setup(db)
+    db.commit()
+
+    set_cadence_override(db, user.id, "spotify", "every:6:weeks")
+    assert db.query(SubscriptionRule).count() == 1
+
+    set_cadence_override(db, user.id, "spotify", None)
+    assert db.query(SubscriptionRule).count() == 0
+
+
+def test_remove_rule_keeps_custom_cadence_override(db):
+    _, _, user = _setup(db)
+    rule = SubscriptionRule(
+        user_id=user.id,
+        merchant_key="spotify",
+        rule="include",
+        cadence_override="every:6:weeks",
+    )
+    db.add(rule)
+    db.commit()
+
+    assert remove_rule(db, user.id, rule.id) is True
+    row = db.query(SubscriptionRule).filter_by(merchant_key="spotify").one()
+    assert row.rule is None
+    assert row.cadence_override == "every:6:weeks"
+
+
+def test_manual_entry_with_custom_cadence(db):
+    _, _, user = _setup(db)
+    db.commit()
+
+    create_manual_entry(
+        db, user.id, "Massage", amount=90.0, cadence="every:6:weeks",
+        start_date=_days_ago(70),
+    )
+    item = build_subscriptions_report(db, user.id).subscriptions[0]
+
+    assert item.cadence == "every:6:weeks"
+    assert item.monthly_equivalent == round(90.0 * (365.25 / 42) / 12, 2)
+    # Two 42-day steps clear the 70-day-old anchor.
+    assert item.next_expected == (_days_ago(70) + timedelta(days=84)).isoformat()
+
+
+def test_manual_entry_custom_cadence_without_start_date(db):
+    _, _, user = _setup(db)
+    db.commit()
+
+    create_manual_entry(db, user.id, "No Anchor", amount=90.0, cadence="every:6:weeks")
+    item = build_subscriptions_report(db, user.id).subscriptions[0]
+
+    assert item.next_expected is None
+    assert item.monthly_equivalent == round(90.0 * (365.25 / 42) / 12, 2)
+
+
+def test_custom_cadence_duplicate_uses_interval_branch(db):
+    acct, cat, user = _setup(db)
+    for i in range(5, 0, -1):
+        _tx(db, acct, cat, 60.0, TransactionType.DEBIT, _days_ago(42 * i), desc="Massage")
+    # Ten days after the last regular charge — under half the 42-day interval.
+    _tx(db, acct, cat, 60.0, TransactionType.DEBIT, _days_ago(32), desc="Massage")
+    db.flush()
+    key = normalize_merchant(db.query(Transaction).first())
+    db.add(SubscriptionRule(user_id=user.id, merchant_key=key, rule="include"))
+    db.commit()
+    set_cadence_override(db, user.id, key, "every:6:weeks")
+
+    item = build_subscriptions_report(db, user.id).subscriptions[0]
+
+    # A custom interval has no calendar period, so it flags dates, not months.
+    assert item.has_duplicates is True
+    assert item.duplicate_periods == [_days_ago(32).isoformat()]
+
+
+def test_custom_cadence_regular_series_not_flagged(db):
+    acct, cat, user = _setup(db)
+    for i in range(5, 0, -1):
+        _tx(db, acct, cat, 60.0, TransactionType.DEBIT, _days_ago(42 * i), desc="Massage")
+    db.flush()
+    key = normalize_merchant(db.query(Transaction).first())
+    db.add(SubscriptionRule(user_id=user.id, merchant_key=key, rule="include"))
+    db.commit()
+    set_cadence_override(db, user.id, key, "every:6:weeks")
+
+    item = build_subscriptions_report(db, user.id).subscriptions[0]
+
+    assert item.has_duplicates is False
+    assert item.duplicate_periods == []
+
+
+def test_custom_cadence_does_not_promote_candidate(db):
+    acct, cat, user = _setup(db)
+    for days in (135, 115, 70, 0):
+        _tx(db, acct, cat, 25.0, TransactionType.DEBIT, _days_ago(days), desc="Odd Charge")
+    db.flush()
+    key = normalize_merchant(db.query(Transaction).first())
+    db.commit()
+    set_cadence_override(db, user.id, key, "every:6:weeks")
+
+    report = build_subscriptions_report(db, user.id)
+
+    # Detection is builtin-only: an override alone still doesn't force-track.
+    assert report.subscriptions == []
+    assert {c.merchant_key for c in report.candidates} == {key}
+
+
+# ── Cadence validation ────────────────────────────────────────────────────────
+
+
+def test_cadence_schema_accepts_custom():
+    assert (
+        SubscriptionCadenceUpsert(merchant_key="x", cadence="every:6:weeks").cadence
+        == "every:6:weeks"
+    )
+
+
+def test_cadence_schema_canonicalizes():
+    assert (
+        SubscriptionCadenceUpsert(merchant_key="x", cadence="every:1:months").cadence
+        == "monthly"
+    )
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        "every:0:weeks",     # zero interval
+        "every:100:weeks",   # would overflow the String(20) column
+        "every:6:days",      # unsupported unit
+        "every:6",           # no unit
+        "every:06:weeks",    # leading zero
+        "irregular",         # derived only, never forced
+        "weeekly",
+        "",
+    ],
+)
+def test_cadence_schema_rejects_bad_values(bad):
+    with pytest.raises(ValidationError):
+        SubscriptionCadenceUpsert(merchant_key="x", cadence=bad)
+
+
+def test_report_cadence_allows_irregular_but_override_does_not():
+    item = SubscriptionItem(
+        merchant_key="x",
+        display_name="X",
+        cadence="irregular",
+        status="active",
+        amount=1.0,
+        occurrence_count=1,
+        monthly_equivalent=1.0,
+        annual_equivalent=12.0,
+        total_in_window=1.0,
+    )
+    assert item.cadence == "irregular"
+
+    with pytest.raises(ValidationError):
+        SubscriptionCadenceUpsert(merchant_key="x", cadence="irregular")

@@ -186,7 +186,8 @@ def get_subscriptions_report(
     Recurring charges detected from transaction history.
 
     Groups debits by a normalized merchant key and looks for a regular
-    cadence (weekly through annual) with similar amounts. Returns detected
+    cadence (weekly through annual, or a custom interval the user set) with
+    similar amounts. Returns detected
     subscriptions with cadence, status (active/lapsed), price-increase flags,
     and monthly-equivalent cost, plus dismissed merchants and near-miss
     candidates the user can choose to track. Per-merchant overrides are

@@ -19,6 +19,10 @@ A manual entry is a subscription the user declared outright rather than one
 found in the data: a rule row on a synthetic 'manual:<hex>' key carrying its
 own amount, cadence, and start date. It reports even with no charges at all,
 and real merchants attach to it through the ordinary alias_of link.
+
+Detection only ever yields one of the builtin cadences, but the user may
+override a merchant with a custom interval ('every:<n>:<weeks|months>') the
+builtins can't express — see cadence_nominal_days.
 """
 
 import re
@@ -38,6 +42,8 @@ from app.schemas.subscriptions import (
     SubscriptionCandidate,
     SubscriptionItem,
     SubscriptionsReport,
+    canonical_cadence,
+    parse_custom_cadence,
 )
 from app.services.reporting import _add_months, _first_day_of_month
 
@@ -74,6 +80,39 @@ CADENCE_BUCKETS: dict[str, tuple[int, int, int]] = {
     "semiannual": (165, 200, 2),
     "annual": (350, 380, 1),
 }
+
+# Average calendar month, so a custom "every 2 months" nominally means 60.875
+# days — measured against the same 365.25-day year as the table above.
+DAYS_PER_MONTH = 365.25 / 12
+
+
+def cadence_nominal_days(cadence: Optional[str]) -> Optional[float]:
+    """Days between charges for a builtin or a custom cadence.
+
+    None when the cadence carries no interval at all: absent, 'irregular', or
+    unrecognized.
+    """
+    if cadence in CADENCE_BUCKETS:
+        return 365.25 / CADENCE_BUCKETS[cadence][2]
+    parsed = parse_custom_cadence(cadence)
+    if parsed is None:
+        return None
+    interval, unit = parsed
+    return interval * (7.0 if unit == "weeks" else DAYS_PER_MONTH)
+
+
+def cadence_periods_per_year(cadence: Optional[str]) -> Optional[float]:
+    """Charges per year, or None for a cadence with no interval.
+
+    Builtins return their exact tabled value rather than a round trip through
+    nominal days: 365.25 / (365.25 / 52) is not guaranteed to be exactly 52.0,
+    and the existing totals depend on it being so.
+    """
+    if cadence in CADENCE_BUCKETS:
+        return float(CADENCE_BUCKETS[cadence][2])
+    days = cadence_nominal_days(cadence)
+    return None if days is None else 365.25 / days
+
 
 # Cadences sparse enough that a lookback window can only hold a couple
 # of occurrences, so they get a lower minimum-occurrence threshold.
@@ -297,11 +336,13 @@ def _find_duplicates(
 
     Monthly and slower bucket by calendar period (a monthly charge drifting
     across a month boundary can false-positive — acceptable for a
-    warning-only signal). Weekly/biweekly flag gaps under half the nominal
-    interval, since calendar weeks don't align with billing weeks.
+    warning-only signal). Weekly, biweekly, and custom intervals flag gaps
+    under half the nominal interval, since calendar weeks don't align with
+    billing weeks and a custom interval has no calendar period at all.
     Warning only — never changes totals or detection status.
     """
-    if cadence is None or cadence not in CADENCE_BUCKETS:
+    nominal = cadence_nominal_days(cadence)
+    if nominal is None:
         return False, []
 
     if cadence in _PERIOD_KEYS:
@@ -312,8 +353,7 @@ def _find_duplicates(
         periods = sorted(p for p, n in buckets.items() if n >= 2)
         return bool(periods), periods
 
-    # weekly / biweekly
-    nominal = 365.25 / CADENCE_BUCKETS[cadence][2]
+    # weekly / biweekly / any custom interval
     flagged = {d for d in dates if day_counts.get(d, 1) >= 2}
     for a, b in zip(dates, dates[1:]):
         if (b - a).days < nominal / 2:
@@ -355,12 +395,13 @@ def _build_item(
         # User-forced cadence: all interval math uses the nominal cadence
         # length, not the observed median (which reflects the wrong cadence).
         cadence = cadence_override
-        periods_per_year = CADENCE_BUCKETS[cadence][2]
-        nominal_interval = 365.25 / periods_per_year
+        periods_per_year = cadence_periods_per_year(cadence)
+        nominal_interval = cadence_nominal_days(cadence)
         monthly_equivalent = round(amount * periods_per_year / 12.0, 2)
         next_expected = last_charged + timedelta(days=round(nominal_interval))
         lapsed_after_days = LAPSED_INTERVAL_FACTOR * nominal_interval
     elif cadence is not None:
+        # Detection only ever yields a builtin cadence.
         periods_per_year = CADENCE_BUCKETS[cadence][2]
         monthly_equivalent = round(amount * periods_per_year / 12.0, 2)
         next_expected = last_charged + timedelta(days=round(median_interval))
@@ -418,8 +459,11 @@ def _build_item(
 
 
 def _roll_forward(start: date, cadence: str, today: date) -> date:
-    """First occurrence of a cadence anchored at `start` that is not past."""
-    step = max(1, round(365.25 / CADENCE_BUCKETS[cadence][2]))
+    """First occurrence of a cadence anchored at `start` that is not past.
+
+    Callers check cadence_periods_per_year first, so the interval resolves.
+    """
+    step = max(1, round(cadence_nominal_days(cadence)))
     if start >= today:
         return start
     periods = -((start - today).days // step)  # ceil division on a negative gap
@@ -435,14 +479,13 @@ def _build_manual_item(rule: SubscriptionRule, today: date) -> SubscriptionItem:
     """
     amount = round(float(rule.manual_amount), 2) if rule.manual_amount is not None else 0.0
     cadence = rule.cadence_override or "irregular"
+    periods_per_year = cadence_periods_per_year(cadence)
     monthly_equivalent = (
-        round(amount * CADENCE_BUCKETS[cadence][2] / 12.0, 2)
-        if cadence in CADENCE_BUCKETS
-        else 0.0
+        round(amount * periods_per_year / 12.0, 2) if periods_per_year is not None else 0.0
     )
     next_expected = (
         _roll_forward(rule.manual_start_date, cadence, today)
-        if rule.manual_start_date is not None and cadence in CADENCE_BUCKETS
+        if rule.manual_start_date is not None and periods_per_year is not None
         else None
     )
 
@@ -752,11 +795,18 @@ def set_cadence_override(
 ) -> None:
     """Set or clear (cadence=None) the forced billing cadence for a merchant.
 
+    Accepts a builtin cadence name or a custom 'every:<n>:<weeks|months>'.
+
     Raises ValueError when clearing the cadence on a manual entry — it has
-    no charge series to infer one from.
+    no charge series to infer one from — or when the cadence is unusable.
     """
     if cadence is None and is_manual_entry(merchant_key):
         raise ValueError("a manually added subscription needs a cadence")
+
+    # 'every:1:months' and 'monthly' are the same interval; store one spelling.
+    cadence = canonical_cadence(cadence)
+    if cadence is not None and cadence_nominal_days(cadence) is None:
+        raise ValueError(f"unusable cadence: {cadence!r}")
 
     row = _get_rule(db, user_id, merchant_key)
     if row is None:
@@ -810,7 +860,7 @@ def create_manual_entry(
         merchant_key=new_manual_key(),
         rule="include",
         nickname=name,
-        cadence_override=cadence,
+        cadence_override=canonical_cadence(cadence),
         manual_amount=amount,
         manual_start_date=start_date,
     )

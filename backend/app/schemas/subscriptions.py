@@ -2,16 +2,73 @@
 Pydantic schemas for the subscription report and its per-merchant
 override rules (include/exclude, nicknames, linked merchant keys, forced
 cadence/status, and manually entered subscriptions).
+
+Also the home of the cadence vocabulary itself, since services/subscriptions.py
+imports this module (never the reverse).
 """
 
+import re
 from datetime import date
-from typing import Literal, Optional
+from typing import Annotated, Literal, Optional
 
-from pydantic import BaseModel, field_validator, model_validator
+from pydantic import AfterValidator, BaseModel, field_validator, model_validator
 
-Cadence = Literal["weekly", "biweekly", "monthly", "quarterly", "semiannual", "annual", "irregular"]
+BUILTIN_CADENCES = ("weekly", "biweekly", "monthly", "quarterly", "semiannual", "annual")
+
+# A cadence the builtin names can't express, e.g. "every:6:weeks". It shares
+# the cadence_override column with the builtin names: no builtin contains ':',
+# so the "every:" prefix is unambiguous, and the longest form
+# ("every:99:months", 15 chars) fits the column's String(20).
+CUSTOM_CADENCE_RE = re.compile(r"^every:([1-9]\d?):(weeks|months)$")
+
+# A custom cadence landing exactly on a builtin is stored as that builtin.
+# One spelling per interval keeps duplicate detection on its calendar-period
+# path (see _PERIOD_KEYS) and keeps the UI's unsaved-changes check honest.
+# Mirrored by CUSTOM_EQUIVALENTS in SubscriptionsTab.tsx.
+_CUSTOM_EQUIVALENTS: dict[tuple[int, str], str] = {
+    (1, "weeks"): "weekly",
+    (2, "weeks"): "biweekly",
+    (1, "months"): "monthly",
+    (3, "months"): "quarterly",
+    (6, "months"): "semiannual",
+    (12, "months"): "annual",
+}
+
+
+def parse_custom_cadence(cadence: Optional[str]) -> Optional[tuple[int, str]]:
+    """(interval, unit) for a custom cadence string; None for anything else."""
+    m = CUSTOM_CADENCE_RE.match(cadence) if cadence else None
+    return (int(m.group(1)), m.group(2)) if m else None
+
+
+def canonical_cadence(cadence: Optional[str]) -> Optional[str]:
+    """Collapse a custom cadence onto the builtin it equals.
+
+    Anything else — a builtin, "irregular", None — passes through unchanged.
+    """
+    parsed = parse_custom_cadence(cadence)
+    return _CUSTOM_EQUIVALENTS.get(parsed, cadence) if parsed else cadence
+
+
+def _valid_cadence_override(v: str) -> str:
+    v = canonical_cadence(v.strip())
+    if v not in BUILTIN_CADENCES and parse_custom_cadence(v) is None:
+        raise ValueError(
+            f"cadence must be one of {', '.join(BUILTIN_CADENCES)}"
+            " or 'every:<1-99>:<weeks|months>'"
+        )
+    return v
+
+
+def _valid_cadence(v: str) -> str:
+    return v if v == "irregular" else _valid_cadence_override(v)
+
+
+# A reported cadence: a builtin name, a custom "every:<n>:<unit>", or the
+# derived "irregular".
+Cadence = Annotated[str, AfterValidator(_valid_cadence)]
 # Settable as an override; "irregular" is only ever derived, never forced.
-CadenceOverride = Literal["weekly", "biweekly", "monthly", "quarterly", "semiannual", "annual"]
+CadenceOverride = Annotated[str, AfterValidator(_valid_cadence_override)]
 # A pinned status. 'inactive' reports as "lapsed" — it drops out of the
 # active totals exactly like a subscription that stopped being charged.
 StatusOverride = Literal["active", "inactive"]

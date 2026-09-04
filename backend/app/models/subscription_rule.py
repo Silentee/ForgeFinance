@@ -26,6 +26,8 @@ class SubscriptionRule(Base):
       the merged group.
     - cadence_override: user-forced billing cadence for the merchant,
       replacing the inferred one in the report's math; NULL means infer.
+      Either a builtin cadence name or a custom 'every:<n>:<weeks|months>'
+      interval the builtins can't express (see services/subscriptions.py).
     - status_override: 'active' or 'inactive' pins the reported status;
       NULL means derive it from the last charge date.
 
@@ -53,7 +55,9 @@ class SubscriptionRule(Base):
     rule: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)  # 'include' | 'exclude' | NULL
     nickname: Mapped[Optional[str]] = mapped_column(String(120), nullable=True)
     alias_of: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
-    cadence_override: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)  # cadence name | NULL
+    # builtin cadence name, 'every:<n>:<weeks|months>' (n <= 99, so the longest
+    # form is 15 chars), or NULL to infer
+    cadence_override: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
     status_override: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)  # 'active' | 'inactive' | NULL
 
     # Manual-entry detail; NULL on rows that only override a detected merchant.

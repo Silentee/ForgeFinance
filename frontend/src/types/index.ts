@@ -360,7 +360,7 @@ export interface SpendingAveragesReport {
 
 // ─── Subscriptions ───────────────────────────────────────────────────────────
 
-export type SubscriptionCadence =
+export type SubscriptionCadenceBuiltin =
   | 'weekly'
   | 'biweekly'
   | 'monthly'
@@ -368,6 +368,15 @@ export type SubscriptionCadence =
   | 'semiannual'
   | 'annual'
   | 'irregular'
+
+// A user-set interval the builtins can't express, e.g. 'every:6:weeks'. One
+// that lands exactly on a builtin is stored as that builtin server-side (see
+// canonical_cadence), so 'every:1:months' never reaches the client.
+export type SubscriptionCustomCadence =
+  | `every:${number}:weeks`
+  | `every:${number}:months`
+
+export type SubscriptionCadence = SubscriptionCadenceBuiltin | SubscriptionCustomCadence
 
 // Settable as an override; 'irregular' is only ever derived, never forced.
 export type SubscriptionCadenceOverride = Exclude<SubscriptionCadence, 'irregular'>
