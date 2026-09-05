@@ -30,6 +30,9 @@ class SubscriptionRule(Base):
       interval the builtins can't express (see services/subscriptions.py).
     - status_override: 'active' or 'inactive' pins the reported status;
       NULL means derive it from the last charge date.
+    - category_id: pins the category the report files this subscription
+      under, overriding the dominant category of its charges; NULL means
+      derive it. The only category a manual entry with no charges can have.
 
     A manual entry is a row whose merchant_key is synthetic
     ('manual:<hex>' — see MANUAL_KEY_PREFIX in services/subscriptions.py):
@@ -40,8 +43,8 @@ class SubscriptionRule(Base):
     - manual_amount: per-charge amount, used while no charges are linked.
     - manual_start_date: anchor the next-expected date is rolled forward from.
 
-    A row may carry only a nickname, alias, cadence, status, or manual
-    detail (rule=NULL); rows that end up with none of them are deleted.
+    A row may carry only a nickname, alias, cadence, status, category, or
+    manual detail (rule=NULL); rows that end up with none of them are deleted.
     """
     __tablename__ = "subscription_rules"
     __table_args__ = (
@@ -59,6 +62,9 @@ class SubscriptionRule(Base):
     # form is 15 chars), or NULL to infer
     cadence_override: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
     status_override: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)  # 'active' | 'inactive' | NULL
+    category_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("categories.id"), nullable=True, index=True
+    )
 
     # Manual-entry detail; NULL on rows that only override a detected merchant.
     manual_amount: Mapped[Optional[float]] = mapped_column(Numeric(14, 2), nullable=True)

@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
-from app.models import Budget, BudgetVisibleCategories, Category
+from app.models import Budget, BudgetVisibleCategories, Category, SubscriptionRule
 from app.schemas.reports import CategoryCreate, CategoryUpdate, CategoryRead
 
 router = APIRouter()
@@ -147,6 +147,12 @@ def delete_category(category_id: int, db: Session = Depends(get_db)):
             continue
         if isinstance(ids, list) and category_id in ids:
             row.category_ids_json = json.dumps([i for i in ids if i != category_id])
+
+    # Subscriptions pinned to this category fall back to deriving one from
+    # their charges; a manual entry with none simply reports uncategorized.
+    db.query(SubscriptionRule).filter(SubscriptionRule.category_id == category_id).update(
+        {"category_id": None}, synchronize_session=False
+    )
 
     db.delete(cat)
     db.commit()

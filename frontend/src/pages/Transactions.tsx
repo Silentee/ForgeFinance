@@ -1,7 +1,7 @@
 import { useState, useMemo, useEffect, useRef } from 'react'
 import { Link, useLocation } from 'react-router-dom'
 import { useTransactions, useAccounts, useCategories, useCreateTransaction, useUpdateTransaction, useDeleteTransaction, useDebouncedValue } from '@/hooks'
-import { Card, PageHeader, Button, EmptyState, Spinner, Modal, FilterDropdown, CheckboxRow } from '@/components/ui'
+import { Card, PageHeader, Button, EmptyState, Spinner, Modal, FilterDropdown, CheckboxRow, CategorySelect } from '@/components/ui'
 import { formatCurrency, formatDate, toLocalDateString, todayLocal, sortBySortOrder } from '@/lib/format'
 import type { Transaction, TransactionUpdate, TransactionCreate, TransactionType, Category } from '@/types'
 import clsx from 'clsx'
@@ -65,33 +65,6 @@ function endOfCurrentMonth(): string {
 
 function flattenCategories(cats: Category[]): Category[] {
   return cats.flatMap(c => [c, ...flattenCategories(c.children)])
-}
-
-function CategorySelect({ value, onChange, categories }: {
-  value: number | undefined
-  onChange: (id: number | undefined) => void
-  categories: Category[]
-}) {
-  // Parent categories with children become optgroups, ordered by their
-  // configured sort_order (editable in the Category manager).
-  const sortedGroups = sortBySortOrder(categories.filter(c => c.children.length > 0))
-
-  return (
-    <select
-      value={value ?? ''}
-      onChange={e => onChange(e.target.value ? Number(e.target.value) : undefined)}
-      className="w-full bg-surface-700 border border-white/[0.08] rounded-lg px-3 py-2 text-sm text-ink-100 focus:outline-none focus:border-amber-400/40 transition-colors"
-    >
-      <option value="">Uncategorized</option>
-      {sortedGroups.map(parent => (
-        <optgroup key={parent.id} label={parent.name}>
-          {sortBySortOrder(parent.children).map(child => (
-            <option key={child.id} value={child.id}>{child.name}</option>
-          ))}
-        </optgroup>
-      ))}
-    </select>
-  )
 }
 
 function EditTransactionModal({ tx, categories, onClose }: {

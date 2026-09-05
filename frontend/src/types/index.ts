@@ -414,6 +414,9 @@ export interface SubscriptionItem {
   total_in_window: number
   category_id?: number
   category_name?: string
+  // The pinned category, when one is set. category_id may hold the same value
+  // or a derived one, so only this says which it is.
+  category_override_id?: number | null
   is_manual: boolean
   is_manual_entry: boolean
   manual_amount?: number | null
@@ -458,6 +461,7 @@ export interface SubscriptionRule {
   alias_of?: string
   cadence_override?: SubscriptionCadenceOverride
   status_override?: SubscriptionStatusOverride
+  category_id?: number | null
   manual_amount?: number | null
   manual_start_date?: string | null
 }
@@ -491,6 +495,11 @@ export interface SubscriptionStatusUpsert {
   status?: SubscriptionStatusOverride
 }
 
+export interface SubscriptionCategoryUpsert {
+  merchant_key: string
+  category_id?: number
+}
+
 export interface ManualSubscriptionCreate {
   name: string
   merchant_keys: string[]
@@ -499,6 +508,8 @@ export interface ManualSubscriptionCreate {
   amount?: number
   cadence?: SubscriptionCadenceOverride
   start_date?: string
+  // Pinned, unlike the fields above: it keeps winning once charges attach.
+  category_id?: number
 }
 
 export interface ManualEntryUpdate {

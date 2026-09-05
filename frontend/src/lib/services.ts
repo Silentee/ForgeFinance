@@ -11,7 +11,8 @@ import type {
   BudgetReport, NetWorthHistory, SpendingTrendsReport, SpendingAveragesReport, MonthlyTotalsReport, EquityHistoryReport,
   SubscriptionsReport, SubscriptionRule, SubscriptionRuleUpsert,
   SubscriptionNicknameUpsert, SubscriptionLinkRequest, SubscriptionUnlinkRequest,
-  SubscriptionCadenceUpsert, SubscriptionStatusUpsert, ManualSubscriptionCreate,
+  SubscriptionCadenceUpsert, SubscriptionStatusUpsert, SubscriptionCategoryUpsert,
+  ManualSubscriptionCreate,
   ManualEntryUpdate, MerchantKeyResolution,
   ImportSource, CSVImportResult, CSVColumnMapping,
   BalanceSnapshot, BalanceSnapshotUpdate,
@@ -219,7 +220,7 @@ export const reportsApi = {
   equityHistory: (months?: number) =>
     apiClient.get<EquityHistoryReport>('/reports/equity/history', { params: { months } }).then(r => r.data),
 
-  subscriptions: (params?: { months?: number; account_ids?: string; tagged_only?: boolean }) =>
+  subscriptions: (params?: { months?: number; account_ids?: string }) =>
     apiClient.get<SubscriptionsReport>('/reports/subscriptions', { params }).then(r => r.data),
 }
 
@@ -243,6 +244,9 @@ export const subscriptionsApi = {
 
   setStatus: (data: SubscriptionStatusUpsert) =>
     apiClient.put('/subscriptions/status', data),
+
+  setCategory: (data: SubscriptionCategoryUpsert) =>
+    apiClient.put('/subscriptions/category', data),
 
   createManual: (data: ManualSubscriptionCreate) =>
     apiClient.post<SubscriptionRule>('/subscriptions/manual', data).then(r => r.data),

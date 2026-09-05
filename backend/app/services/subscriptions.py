@@ -12,8 +12,7 @@ force-tracks one that failed detection).
 
 Transactions categorized as 'Subscriptions' are treated as explicitly
 tagged: their merchant always appears in the report even when detection
-fails (down to a single one-off charge), and `tagged_only` restricts the
-whole report to such transactions.
+fails (down to a single one-off charge).
 
 A manual entry is a subscription the user declared outright rather than one
 found in the data: a rule row on a synthetic 'manual:<hex>' key carrying its
@@ -194,17 +193,12 @@ def _get_candidate_transactions(
     db: Session,
     date_from: date,
     account_ids: Optional[list[int]] = None,
-    category_ids: Optional[set[int]] = None,
 ) -> list[Transaction]:
     """Debits eligible for recurrence detection.
 
     Unlike budget reports, is_annualized rows are included: annualized is a
     budget-spreading flag and an annualized annual charge is exactly the kind
     of subscription this report exists to surface.
-
-    category_ids restricts to those categories (None means no restriction;
-    an empty set matches nothing — used by tagged_only when no 'Subscriptions'
-    category exists).
     """
     q = db.query(Transaction).filter(
         Transaction.date >= date_from,
@@ -215,8 +209,6 @@ def _get_candidate_transactions(
     )
     if account_ids:
         q = q.filter(Transaction.account_id.in_(account_ids))
-    if category_ids is not None:
-        q = q.filter(Transaction.category_id.in_(category_ids))
     return q.all()
 
 
@@ -373,8 +365,10 @@ def _build_item(
     linked_merchants: Optional[list[LinkedMerchantRead]] = None,
     cadence_override: Optional[str] = None,
     status_override: Optional[str] = None,
+    category_override_id: Optional[int] = None,
     manual_amount: Optional[float] = None,
     manual_start_date: Optional[date] = None,
+    cat_names: Optional[dict[int, str]] = None,
 ) -> SubscriptionItem:
     cadence = g.cadence
     median_interval = g.median_interval
@@ -423,6 +417,14 @@ def _build_item(
         dates, g.day_counts, cadence if cadence != "irregular" else None
     )
 
+    # A pinned category wins over the charges' dominant one, so a manual
+    # entry keeps the category the user chose even after charges attach.
+    if category_override_id is not None:
+        category_id = category_override_id
+        category_name = (cat_names or {}).get(category_override_id)
+    else:
+        category_id, category_name = g.category_id, g.category_name
+
     return SubscriptionItem(
         merchant_key=merchant_key,
         display_name=g.display_name,
@@ -443,8 +445,9 @@ def _build_item(
         monthly_equivalent=monthly_equivalent,
         annual_equivalent=round(monthly_equivalent * 12, 2),
         total_in_window=round(sum(amounts), 2),
-        category_id=g.category_id,
-        category_name=g.category_name,
+        category_id=category_id,
+        category_name=category_name,
+        category_override_id=category_override_id,
         is_manual=is_manual,
         is_manual_entry=is_manual_entry(merchant_key),
         manual_amount=manual_amount,
@@ -470,7 +473,9 @@ def _roll_forward(start: date, cadence: str, today: date) -> date:
     return start + timedelta(days=step * periods)
 
 
-def _build_manual_item(rule: SubscriptionRule, today: date) -> SubscriptionItem:
+def _build_manual_item(
+    rule: SubscriptionRule, today: date, cat_names: dict[int, str]
+) -> SubscriptionItem:
     """Report row for a manual entry with no charges in the window.
 
     Everything comes from what the user typed. The `or` fallbacks keep a
@@ -508,6 +513,10 @@ def _build_manual_item(rule: SubscriptionRule, today: date) -> SubscriptionItem:
         monthly_equivalent=monthly_equivalent,
         annual_equivalent=round(monthly_equivalent * 12, 2),
         total_in_window=0.0,
+        # Nothing was charged, so the pinned category is the only one there is.
+        category_id=rule.category_id,
+        category_name=cat_names.get(rule.category_id) if rule.category_id else None,
+        category_override_id=rule.category_id,
         is_manual=True,
         is_manual_entry=True,
         manual_amount=amount if rule.manual_amount is not None else None,
@@ -526,7 +535,6 @@ def build_subscriptions_report(
     user_id: int,
     months: int = 24,
     account_ids: Optional[list[int]] = None,
-    tagged_only: bool = False,
 ) -> SubscriptionsReport:
     today = date.today()
     start_year, start_month = _add_months(today.year, today.month, -(months - 1))
@@ -542,9 +550,7 @@ def build_subscriptions_report(
         .all()
     }
 
-    txs = _get_candidate_transactions(
-        db, date_from, account_ids, tagged_cat_ids if tagged_only else None
-    )
+    txs = _get_candidate_transactions(db, date_from, account_ids)
 
     rules = {
         r.merchant_key: r
@@ -578,8 +584,11 @@ def build_subscriptions_report(
         child_rule = rules.get(key)
         return (child_rule.nickname if child_rule else None) or key
 
-    # One Category lookup covers every group's dominant-category resolution.
+    # One Category lookup covers every group's dominant-category resolution
+    # and every rule's pinned category, including manual entries with no
+    # charges (whose id appears nowhere in txs).
     cat_ids = {tx.category_id for tx in txs if tx.category_id is not None}
+    cat_ids |= {r.category_id for r in rules.values() if r.category_id is not None}
     cat_names = (
         {c.id: c.name for c in db.query(Category).filter(Category.id.in_(cat_ids)).all()}
         if cat_ids
@@ -599,12 +608,14 @@ def build_subscriptions_report(
         row_id = (
             rule.id if rule is not None and is_manual_entry(merchant_key) else None
         )
-        # Bundled because every _build_item call below passes all five
+        # Bundled because every _build_item call below passes all the
         # user-set fields through unchanged.
         overrides = dict(
             nickname=nickname,
             cadence_override=cadence_override,
             status_override=rule.status_override if rule is not None else None,
+            category_override_id=rule.category_id if rule is not None else None,
+            cat_names=cat_names,
             manual_amount=(
                 round(float(rule.manual_amount), 2)
                 if rule is not None and rule.manual_amount is not None
@@ -713,14 +724,10 @@ def build_subscriptions_report(
     # from what the user typed. One that did collect charges (through a
     # linked merchant) already went through the normal path, since its
     # include rule carries it past the minimum-occurrence guard.
-    #
-    # Skipped under tagged_only: that mode narrows to transactions
-    # categorized 'Subscriptions', and these have no transactions at all.
-    if not tagged_only:
-        for key, rule in rules.items():
-            if is_manual_entry(key) and key not in groups:
-                target = dismissed if rule.rule == "exclude" else subscriptions
-                target.append(_build_manual_item(rule, today))
+    for key, rule in rules.items():
+        if is_manual_entry(key) and key not in groups:
+            target = dismissed if rule.rule == "exclude" else subscriptions
+            target.append(_build_manual_item(rule, today, cat_names))
 
     subscriptions.sort(key=lambda s: s.monthly_equivalent, reverse=True)
     dismissed.sort(key=lambda s: s.monthly_equivalent, reverse=True)
@@ -743,8 +750,9 @@ def build_subscriptions_report(
 # ─── User overrides (nicknames, cadence, and linked merchants) ───────────────
 #
 # All of these mutate SubscriptionRule rows. A row is kept only while it
-# carries something (rule, nickname, alias_of, or cadence_override); emptied
-# rows are deleted so stale merchant keys don't accumulate.
+# carries something (a rule, nickname, alias, cadence, status, category, or
+# manual detail); emptied rows are deleted so stale merchant keys don't
+# accumulate.
 
 
 def _is_empty_rule(row: SubscriptionRule) -> bool:
@@ -758,6 +766,7 @@ def _is_empty_rule(row: SubscriptionRule) -> bool:
         and row.alias_of is None
         and row.cadence_override is None
         and row.status_override is None
+        and row.category_id is None
         and row.manual_amount is None
         and row.manual_start_date is None
     )
@@ -836,6 +845,33 @@ def set_status_override(
     db.commit()
 
 
+def _require_category(db: Session, category_id: Optional[int]) -> Optional[int]:
+    """Reject a category id that doesn't exist; None (clear it) always passes."""
+    if category_id is not None and db.get(Category, category_id) is None:
+        raise ValueError("unknown category")
+    return category_id
+
+
+def set_category_override(
+    db: Session, user_id: int, merchant_key: str, category_id: Optional[int]
+) -> None:
+    """Pin the category a merchant reports under, or clear it (category_id=None).
+
+    Raises ValueError when the category does not exist.
+    """
+    _require_category(db, category_id)
+    row = _get_rule(db, user_id, merchant_key)
+    if row is None:
+        if category_id is None:
+            return
+        db.add(SubscriptionRule(user_id=user_id, merchant_key=merchant_key, category_id=category_id))
+    else:
+        row.category_id = category_id
+        if _is_empty_rule(row):
+            db.delete(row)
+    db.commit()
+
+
 def create_manual_entry(
     db: Session,
     user_id: int,
@@ -844,6 +880,7 @@ def create_manual_entry(
     cadence: Optional[str] = None,
     start_date: Optional[date] = None,
     merchant_keys: Optional[list[str]] = None,
+    category_id: Optional[int] = None,
 ) -> SubscriptionRule:
     """Create a manually tracked subscription.
 
@@ -854,6 +891,10 @@ def create_manual_entry(
 
     amount/cadence/start_date are what the report falls back to while no
     charges are attached; once they are, real charge data takes over.
+    category_id is the exception: it is pinned, so it keeps winning over the
+    attached charges' own category.
+
+    Raises ValueError when category_id names a category that doesn't exist.
     """
     row = SubscriptionRule(
         user_id=user_id,
@@ -861,6 +902,7 @@ def create_manual_entry(
         rule="include",
         nickname=name,
         cadence_override=canonical_cadence(cadence),
+        category_id=_require_category(db, category_id),
         manual_amount=amount,
         manual_start_date=start_date,
     )

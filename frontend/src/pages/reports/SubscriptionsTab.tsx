@@ -8,6 +8,7 @@ import {
   useSetSubscriptionNickname,
   useSetSubscriptionCadence,
   useSetSubscriptionStatus,
+  useSetSubscriptionCategory,
   useCreateManualSubscription,
   useUpdateManualSubscription,
   useDeleteManualSubscription,
@@ -17,7 +18,7 @@ import {
   useDebouncedValue,
 } from '@/hooks'
 import { transactionsApi } from '@/lib/services'
-import { Button, Card, CheckboxRow, FilterDropdown, Modal, Spinner } from '@/components/ui'
+import { Button, Card, CategorySelect, CheckboxRow, FilterDropdown, Modal, Spinner } from '@/components/ui'
 import {
   formatCurrency,
   formatCurrencyWhole,
@@ -137,6 +138,12 @@ const displayName = (x: { nickname?: string; display_name: string }) =>
 
 const dateOrDash = (iso?: string | null) => (iso ? formatDateShort(iso) : '—')
 
+// What the "Active only" filter, the badge colour, and the summary totals all
+// mean by active. A pinned 'inactive' already reports as lapsed from the API,
+// so the second test is belt-and-braces against that mapping ever changing.
+const isActiveRow = (s: SubscriptionItem) =>
+  s.status === 'active' && s.status_override !== 'inactive'
+
 function StatusBadge({ item }: { item: SubscriptionItem }) {
   // A pinned 'inactive' still reports as lapsed from the API — only the label
   // separates the two, since one is a decision and the other a detection
@@ -149,7 +156,7 @@ function StatusBadge({ item }: { item: SubscriptionItem }) {
       title={item.status_override === 'active' ? 'Manually set to active' : undefined}
       className={clsx(
         'inline-block rounded-full px-2 py-0.5 text-2xs font-medium',
-        item.status === 'active' && !isInactive
+        isActiveRow(item)
           ? 'bg-teal-400/10 text-teal-400'
           : 'bg-amber-400/10 text-amber-400'
       )}
@@ -455,14 +462,22 @@ function EditSubscriptionDialog({
   const setNickname = useSetSubscriptionNickname()
   const setCadence = useSetSubscriptionCadence()
   const setStatus = useSetSubscriptionStatus()
+  const setCategory = useSetSubscriptionCategory()
   const updateManual = useUpdateManualSubscription()
   const linkSubs = useLinkSubscriptions()
   const unlinkSub = useUnlinkSubscription()
+  // Already fetched by the page; React Query serves this from cache.
+  const { data: categories } = useCategories({ expense_only: true })
 
   const [nickname, setNicknameText] = useState(item.nickname ?? '')
   // null while a custom cadence is half-typed — not saveable, not 'auto'.
   const [cadence, setCadenceValue] = useState<string | null>(item.cadence_override ?? '')
   const [statusValue, setStatusValue] = useState<string>(item.status_override ?? '')
+  // The pinned category, not the derived one: saving must not silently pin a
+  // category the row only inherited from its charges.
+  const [categoryId, setCategoryId] = useState<number | undefined>(
+    item.category_override_id ?? undefined
+  )
   const [amount, setAmount] = useState(
     item.manual_amount != null ? String(item.manual_amount) : ''
   )
@@ -475,6 +490,7 @@ function EditSubscriptionDialog({
     setNickname.isPending ||
     setCadence.isPending ||
     setStatus.isPending ||
+    setCategory.isPending ||
     updateManual.isPending ||
     linkSubs.isPending ||
     unlinkSub.isPending
@@ -542,6 +558,12 @@ function EditSubscriptionDialog({
     })
   }
 
+  const categoryDirty = categoryId !== (item.category_override_id ?? undefined)
+  const saveCategory = () => {
+    if (!categoryDirty) return
+    setCategory.mutate({ merchant_key: item.merchant_key, category_id: categoryId })
+  }
+
   const detailDirty =
     amount !== (item.manual_amount != null ? String(item.manual_amount) : '') ||
     startDate !== (item.manual_start_date ?? '')
@@ -599,6 +621,36 @@ function EditSubscriptionDialog({
               : 'Shown in place of the detected name. Leave empty to clear.'}
           </p>
         </div>
+
+        {/* A detected subscription takes its category from its charges — only
+            one added by hand needs to be told. */}
+        {item.is_manual_entry && (
+          <div>
+            <label className="label block mb-1.5">Category</label>
+            <div className="flex gap-2">
+              <div className="min-w-0 flex-1">
+                <CategorySelect
+                  value={categoryId}
+                  onChange={setCategoryId}
+                  categories={categories ?? []}
+                  disabled={busy}
+                />
+              </div>
+              <Button
+                size="sm"
+                onClick={saveCategory}
+                loading={setCategory.isPending}
+                disabled={busy || !categoryDirty}
+              >
+                Save
+              </Button>
+            </div>
+            <p className="text-2xs text-ink-400 mt-1">
+              Which category this subscription filters under on this page. Uncategorized shows
+              only while “Uncategorized” is checked in the filter.
+            </p>
+          </div>
+        )}
 
         <div>
           <label className="label block mb-1.5">Status</label>
@@ -807,8 +859,11 @@ function AddSubscriptionDialog({
   onClose: () => void
 }) {
   const createManual = useCreateManualSubscription()
+  // Already fetched by the page; React Query serves this from cache.
+  const { data: categories } = useCategories({ expense_only: true })
 
   const [name, setName] = useState('')
+  const [categoryId, setCategoryId] = useState<number | undefined>(undefined)
   const [amount, setAmount] = useState('')
   // Empty by default so attaching a charge lets detection infer the cadence
   // rather than silently pinning one.
@@ -849,6 +904,7 @@ function AddSubscriptionDialog({
         amount: hasDetail ? parsedAmount : undefined,
         cadence: (cadence || undefined) as SubscriptionCadenceOverride | undefined,
         start_date: startDate || undefined,
+        category_id: categoryId,
       },
       { onSuccess: onClose }
     )
@@ -872,6 +928,20 @@ function AddSubscriptionDialog({
             maxLength={120}
             className={INPUT_CLASS}
           />
+        </div>
+
+        <div>
+          <label className="label block mb-1.5">Category</label>
+          <CategorySelect
+            value={categoryId}
+            onChange={setCategoryId}
+            categories={categories ?? []}
+            disabled={createManual.isPending}
+          />
+          <p className="text-2xs text-ink-400 mt-1">
+            Which category this subscription filters under on this page. Optional — leave it
+            uncategorized and it only shows while “Uncategorized” is checked in the filter.
+          </p>
         </div>
 
         <div className="grid grid-cols-3 gap-2">
@@ -960,7 +1030,7 @@ function AddSubscriptionDialog({
 
 export default function SubscriptionsTab() {
   const [months, setMonths] = useState(24)
-  const [taggedOnly, setTaggedOnly] = useState(false)
+  const [activeOnly, setActiveOnly] = useState(false)
   const [showDismissed, setShowDismissed] = useState(false)
   const [showCandidates, setShowCandidates] = useState(false)
   const [showAdd, setShowAdd] = useState(false)
@@ -970,7 +1040,7 @@ export default function SubscriptionsTab() {
   // null = user hasn't touched the filter; the computed default applies.
   const [categoryFilter, setCategoryFilter] = useState<CategoryFilter | null>(null)
 
-  const { data: report, isLoading } = useSubscriptionsReport({ months, tagged_only: taggedOnly })
+  const { data: report, isLoading } = useSubscriptionsReport({ months })
   const { data: categories } = useCategories({ expense_only: true })
   const upsertRule = useUpsertSubscriptionRule()
   const deleteRule = useDeleteSubscriptionRule()
@@ -1065,6 +1135,12 @@ export default function SubscriptionsTab() {
   const filteredDismissed = report.dismissed.filter(s => matchesFilter(s.category_id))
   const filteredCandidates = report.candidates.filter(c => matchesFilter(c.category_id))
 
+  // "Active only" hides rows from the two status-bearing tables but not from
+  // the summary cards below, so the "2 lapsed" line still says what's hidden.
+  // Candidates carry no status, so they're never affected.
+  const visibleSubs = activeOnly ? filteredSubs.filter(isActiveRow) : filteredSubs
+  const visibleDismissed = activeOnly ? filteredDismissed.filter(isActiveRow) : filteredDismissed
+
   const editingItem = editingKey
     ? ([...report.subscriptions, ...report.dismissed].find(s => s.merchant_key === editingKey) ??
       null)
@@ -1092,11 +1168,11 @@ export default function SubscriptionsTab() {
 
   // Summary values reflect the category filter, so they're recomputed here
   // rather than taken from the server totals.
-  const activeSubs = filteredSubs.filter(s => s.status === 'active')
+  const activeSubs = filteredSubs.filter(isActiveRow)
   const totalMonthly = activeSubs.reduce((sum, s) => sum + s.monthly_equivalent, 0)
   const totalAnnual = activeSubs.reduce((sum, s) => sum + s.annual_equivalent, 0)
   // Split the same way the badge is: a hand-pinned 'inactive' isn't a lapse.
-  const nonActive = filteredSubs.filter(s => s.status !== 'active')
+  const nonActive = filteredSubs.filter(s => !isActiveRow(s))
   const inactiveCount = nonActive.filter(s => s.status_override === 'inactive').length
   const lapsedCount = nonActive.length - inactiveCount
   const priceIncreaseCount = filteredSubs.filter(s => s.price_increased).length
@@ -1168,16 +1244,16 @@ export default function SubscriptionsTab() {
         </FilterDropdown>
         <button
           type="button"
-          onClick={() => setTaggedOnly(v => !v)}
-          title='Only show transactions categorized as "Subscriptions"'
+          onClick={() => setActiveOnly(v => !v)}
+          title="Hide lapsed and inactive subscriptions"
           className={clsx(
             'bg-surface-700 rounded-lg px-3 py-2 text-sm transition-colors border',
-            taggedOnly
+            activeOnly
               ? 'border-amber-400/40 bg-amber-400/5 text-amber-300'
               : 'border-white/[0.08] text-ink-100'
           )}
         >
-          Tagged only
+          Active only
         </button>
         <div className="ml-auto flex items-center gap-2">
           <span>Lookback:</span>
@@ -1233,18 +1309,16 @@ export default function SubscriptionsTab() {
 
       <Card>
         <h4 className="label mb-3">Detected Subscriptions</h4>
-        {filteredSubs.length === 0 ? (
+        {visibleSubs.length === 0 ? (
           <p className="text-xs text-ink-400 py-4">
             {report.subscriptions.length > 0
               ? 'No subscriptions match the current filters.'
-              : taggedOnly
-                ? 'No transactions categorized as "Subscriptions" in this window. Assign that category to a charge on the Transactions page to always include it here.'
-                : 'No recurring charges detected yet. Subscriptions appear once the same merchant has been charged a few times at a regular interval — import more transaction history, or add one manually.'}
+              : 'No recurring charges detected yet. Subscriptions appear once the same merchant has been charged a few times at a regular interval — import more transaction history, or add one manually.'}
           </p>
         ) : (
           <div className="overflow-x-auto">
             <SubscriptionRows
-              items={filteredSubs}
+              items={visibleSubs}
               onEdit={item => setEditingKey(item.merchant_key)}
               action={rowAction}
             />
@@ -1252,19 +1326,19 @@ export default function SubscriptionsTab() {
         )}
       </Card>
 
-      {filteredDismissed.length > 0 && (
+      {visibleDismissed.length > 0 && (
         <Card>
           <button
             onClick={() => setShowDismissed(v => !v)}
             className="flex w-full items-center justify-between text-left"
           >
-            <h4 className="label">Dismissed ({filteredDismissed.length})</h4>
+            <h4 className="label">Dismissed ({visibleDismissed.length})</h4>
             <span className="text-xs text-ink-400">{showDismissed ? 'Hide' : 'Show'}</span>
           </button>
           {showDismissed && (
             <div className="overflow-x-auto mt-3">
               <SubscriptionRows
-                items={filteredDismissed}
+                items={visibleDismissed}
                 onEdit={item => setEditingKey(item.merchant_key)}
                 action={item => ({
                   label: 'Restore',

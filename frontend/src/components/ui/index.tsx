@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import clsx from 'clsx'
-import { formatCurrency, formatCurrencyWhole, formatCurrencySigned, formatPercent } from '@/lib/format'
+import { formatCurrency, formatCurrencyWhole, formatCurrencySigned, formatPercent, sortBySortOrder } from '@/lib/format'
+import type { Category } from '@/types'
 
 // ─── Modal ────────────────────────────────────────────────────────────────────
 
@@ -413,7 +414,33 @@ export function CheckboxRow({
 }
 
 
+// ─── Category select ──────────────────────────────────────────────────────────
 
+export function CategorySelect({ value, onChange, categories, disabled }: {
+  value: number | undefined
+  onChange: (id: number | undefined) => void
+  categories: Category[]
+  disabled?: boolean
+}) {
+  // Parent categories with children become optgroups, ordered by their
+  // configured sort_order (editable in the Category manager).
+  const sortedGroups = sortBySortOrder(categories.filter(c => c.children.length > 0))
 
-
-
+  return (
+    <select
+      value={value ?? ''}
+      disabled={disabled}
+      onChange={e => onChange(e.target.value ? Number(e.target.value) : undefined)}
+      className="w-full bg-surface-700 border border-white/[0.08] rounded-lg px-3 py-2 text-sm text-ink-100 focus:outline-none focus:border-amber-400/40 transition-colors disabled:opacity-50"
+    >
+      <option value="">Uncategorized</option>
+      {sortedGroups.map(parent => (
+        <optgroup key={parent.id} label={parent.name}>
+          {sortBySortOrder(parent.children).map(child => (
+            <option key={child.id} value={child.id}>{child.name}</option>
+          ))}
+        </optgroup>
+      ))}
+    </select>
+  )
+}

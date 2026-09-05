@@ -3,6 +3,7 @@ from datetime import date, timedelta
 import pytest
 from pydantic import ValidationError
 
+from app.api.endpoints.categories import delete_category
 from app.models import Account, Category, SubscriptionRule, Transaction, User
 from app.models.enums import TransactionType
 from app.schemas.subscriptions import SubscriptionCadenceUpsert, SubscriptionItem
@@ -15,6 +16,7 @@ from app.services.subscriptions import (
     normalize_merchant,
     remove_rule,
     set_cadence_override,
+    set_category_override,
     set_nickname,
     set_status_override,
     unlink_merchant,
@@ -373,25 +375,6 @@ def test_exclude_rule_beats_tag(db):
     assert len(report.dismissed) == 1
     assert report.dismissed[0].rule_id == rule.id
     assert report.dismissed[0].is_tagged is True
-
-
-def test_tagged_only_mode(db):
-    acct, cat, user = _setup(db)
-    subs = _subs_category(db)
-    for i in range(6):
-        _tx(db, acct, cat, 15.99, TransactionType.DEBIT, _days_ago(30 * i))
-    _tx(db, acct, subs, 120.0, TransactionType.DEBIT, _days_ago(10), desc="One Off Box")
-    db.commit()
-
-    full_report = build_subscriptions_report(db, user.id)
-    assert {s.display_name for s in full_report.subscriptions} == {"Netflix", "One Off Box"}
-
-    tagged_report = build_subscriptions_report(db, user.id, tagged_only=True)
-    assert len(tagged_report.subscriptions) == 1
-    item = tagged_report.subscriptions[0]
-    assert item.display_name == "One Off Box"
-    assert item.is_tagged is True
-    assert tagged_report.candidates == []
 
 
 def test_category_id_exposed(db):
@@ -832,14 +815,6 @@ def test_delete_manual_entry_rejects_a_plain_rule(db):
     assert db.query(SubscriptionRule).count() == 1
 
 
-def test_manual_entry_hidden_by_tagged_only(db):
-    _, _, user = _setup(db)
-    db.commit()
-    create_manual_entry(db, user.id, "Gym", amount=45.0, cadence="monthly")
-
-    assert build_subscriptions_report(db, user.id, tagged_only=True).subscriptions == []
-
-
 # ── Status overrides ──────────────────────────────────────────────────────────
 
 
@@ -910,6 +885,99 @@ def test_status_override_survives_alongside_a_nickname(db):
     row = db.query(SubscriptionRule).filter_by(merchant_key=key).one()
     assert row.nickname == "Movies"
     assert row.status_override is None
+
+
+# ── Category overrides ────────────────────────────────────────────────────────
+
+
+def test_manual_entry_reports_its_pinned_category(db):
+    _, cat, user = _setup(db)
+    db.commit()
+    create_manual_entry(
+        db, user.id, "Gym", amount=45.0, cadence="monthly", category_id=cat.id
+    )
+
+    item = build_subscriptions_report(db, user.id).subscriptions[0]
+    assert item.category_id == cat.id
+    assert item.category_name == "Streaming"
+    assert item.category_override_id == cat.id
+
+
+def test_manual_entry_without_a_category_reports_none(db):
+    _, _, user = _setup(db)
+    db.commit()
+    create_manual_entry(db, user.id, "Gym", amount=45.0, cadence="monthly")
+
+    item = build_subscriptions_report(db, user.id).subscriptions[0]
+    assert item.category_id is None
+    assert item.category_override_id is None
+
+
+def test_pinned_category_beats_the_charges_dominant_one(db):
+    acct, cat, user = _setup(db)
+    other = Category(name="Fitness", is_income=False)
+    db.add(other)
+    db.flush()
+    for i in range(6):
+        _tx(db, acct, cat, 15.99, TransactionType.DEBIT, _days_ago(30 * i))
+    db.commit()
+    key = normalize_merchant(db.query(Transaction).first())
+
+    set_category_override(db, user.id, key, other.id)
+
+    item = build_subscriptions_report(db, user.id).subscriptions[0]
+    assert item.category_id == other.id
+    assert item.category_name == "Fitness"
+    assert item.category_override_id == other.id
+
+
+def test_clearing_the_category_returns_to_the_derived_one(db):
+    acct, cat, user = _setup(db)
+    other = Category(name="Fitness", is_income=False)
+    db.add(other)
+    db.flush()
+    for i in range(6):
+        _tx(db, acct, cat, 15.99, TransactionType.DEBIT, _days_ago(30 * i))
+    db.commit()
+    key = normalize_merchant(db.query(Transaction).first())
+
+    set_category_override(db, user.id, key, other.id)
+    set_category_override(db, user.id, key, None)
+
+    item = build_subscriptions_report(db, user.id).subscriptions[0]
+    assert item.category_id == cat.id
+    assert item.category_override_id is None
+    # The row carried nothing else, so it was cleaned up.
+    assert db.query(SubscriptionRule).count() == 0
+
+
+def test_category_override_rejects_an_unknown_category(db):
+    _, _, user = _setup(db)
+    db.commit()
+
+    with pytest.raises(ValueError):
+        set_category_override(db, user.id, "netflix", 9999)
+    with pytest.raises(ValueError):
+        create_manual_entry(db, user.id, "Gym", amount=45.0, cadence="monthly", category_id=9999)
+    assert db.query(SubscriptionRule).count() == 0
+
+
+def test_deleting_a_category_releases_the_subscriptions_pinned_to_it(db):
+    _, _, user = _setup(db)
+    doomed = Category(name="Fitness", is_income=False)
+    db.add(doomed)
+    db.flush()
+    db.commit()
+    row = create_manual_entry(
+        db, user.id, "Gym", amount=45.0, cadence="monthly", category_id=doomed.id
+    )
+
+    delete_category(doomed.id, db)
+
+    db.refresh(row)
+    assert row.category_id is None
+    item = build_subscriptions_report(db, user.id).subscriptions[0]
+    assert item.category_id is None
 
 
 # ── Cadence overrides ─────────────────────────────────────────────────────────

@@ -99,8 +99,11 @@ class SubscriptionItem(BaseModel):
     monthly_equivalent: float
     annual_equivalent: float
     total_in_window: float
-    category_id: Optional[int] = None    # dominant category across the group
+    category_id: Optional[int] = None    # pinned below, else dominant across the group
     category_name: Optional[str] = None
+    # The pinned category, when the user set one. category_id above may hold
+    # the same value or a derived one, so only this says which it is.
+    category_override_id: Optional[int] = None
     is_manual: bool = False              # forced in by an 'include' rule
     is_manual_entry: bool = False        # user-declared subscription, not a detected merchant
     manual_amount: Optional[float] = None    # manual-entry cost, used while no charges are linked
@@ -217,6 +220,13 @@ class SubscriptionStatusUpsert(BaseModel):
     merchant_key_not_empty = field_validator("merchant_key")(_require_merchant_key)
 
 
+class SubscriptionCategoryUpsert(BaseModel):
+    merchant_key: str
+    category_id: Optional[int] = None    # None returns the row to its derived category
+
+    merchant_key_not_empty = field_validator("merchant_key")(_require_merchant_key)
+
+
 class ManualSubscriptionCreate(BaseModel):
     """Create a manually tracked subscription.
 
@@ -232,6 +242,7 @@ class ManualSubscriptionCreate(BaseModel):
     amount: Optional[float] = None
     cadence: Optional[CadenceOverride] = None
     start_date: Optional[date] = None
+    category_id: Optional[int] = None
 
     amount_positive = field_validator("amount")(_require_positive_amount)
 
@@ -292,6 +303,7 @@ class SubscriptionRuleRead(BaseModel):
     alias_of: Optional[str] = None
     cadence_override: Optional[CadenceOverride] = None
     status_override: Optional[StatusOverride] = None
+    category_id: Optional[int] = None
     manual_amount: Optional[float] = None
     manual_start_date: Optional[date] = None
 

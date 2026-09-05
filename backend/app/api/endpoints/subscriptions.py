@@ -4,9 +4,9 @@ subscriptions.py — Per-merchant overrides for the subscription report.
 The report itself lives at /reports/subscriptions (read-only, like all
 reports). These endpoints manage the SubscriptionRule rows that dismiss
 detected merchants (rule='exclude'), force-track missed ones
-(rule='include'), rename a subscription (nickname), pin its cadence or
-status, or link merchant keys together so drifting descriptors report as
-one subscription (alias_of). They also create and edit manual entries —
+(rule='include'), rename a subscription (nickname), pin its cadence,
+status or category, or link merchant keys together so drifting descriptors
+report as one subscription (alias_of). They also create and edit manual entries —
 subscriptions the user declared outright, which need no charges at all.
 """
 
@@ -23,6 +23,7 @@ from app.schemas.subscriptions import (
     MerchantKeyResolution,
     MerchantKeyResolveRequest,
     SubscriptionCadenceUpsert,
+    SubscriptionCategoryUpsert,
     SubscriptionLinkRequest,
     SubscriptionNicknameUpsert,
     SubscriptionRuleRead,
@@ -37,6 +38,7 @@ from app.services.subscriptions import (
     normalize_merchant,
     remove_rule,
     set_cadence_override,
+    set_category_override,
     set_nickname,
     set_status_override,
     unlink_merchant,
@@ -135,6 +137,23 @@ def upsert_status(
     set_status_override(db, user.id, payload.merchant_key, payload.status)
 
 
+@router.put("/category", status_code=status.HTTP_204_NO_CONTENT)
+def set_category(
+    payload: SubscriptionCategoryUpsert,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """Pin the category a merchant reports under, or clear it (category_id omitted).
+
+    A pinned category wins over the one derived from the merchant's charges —
+    the only category a manual entry with no charges can have.
+    """
+    try:
+        set_category_override(db, user.id, payload.merchant_key, payload.category_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
 @router.post("/manual", response_model=SubscriptionRuleRead, status_code=status.HTTP_201_CREATED)
 def add_manual(
     payload: ManualSubscriptionCreate,
@@ -156,6 +175,7 @@ def add_manual(
             payload.cadence,
             payload.start_date,
             payload.merchant_keys,
+            payload.category_id,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))

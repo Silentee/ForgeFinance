@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { useQuery, useInfiniteQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { accountsApi, accountTypesApi, balancesApi, transactionsApi, categoriesApi, budgetsApi, reportsApi, subscriptionsApi, importsApi, institutionsApi, demoApi, authApi, type TransactionFilters } from '@/lib/services'
 import { getToken } from '@/lib/api'
-import type { AccountCreate, AccountUpdate, AccountTypeCreate, AccountTypeUpdate, AccountTypeDef, BudgetCreate, BudgetUpdate, TransactionUpdate, TransactionCreate, CategoryCreate, CategoryUpdate, CSVColumnMapping, BalanceSnapshotUpdate, SubscriptionRuleUpsert, SubscriptionNicknameUpsert, SubscriptionLinkRequest, SubscriptionUnlinkRequest, SubscriptionCadenceUpsert, SubscriptionStatusUpsert, ManualSubscriptionCreate, ManualEntryUpdate } from '@/types'
+import type { AccountCreate, AccountUpdate, AccountTypeCreate, AccountTypeUpdate, AccountTypeDef, BudgetCreate, BudgetUpdate, TransactionUpdate, TransactionCreate, CategoryCreate, CategoryUpdate, CSVColumnMapping, BalanceSnapshotUpdate, SubscriptionRuleUpsert, SubscriptionNicknameUpsert, SubscriptionLinkRequest, SubscriptionUnlinkRequest, SubscriptionCadenceUpsert, SubscriptionStatusUpsert, SubscriptionCategoryUpsert, ManualSubscriptionCreate, ManualEntryUpdate } from '@/types'
 import { formatAccountType } from '@/lib/format'
 import toast from 'react-hot-toast'
 
@@ -457,7 +457,7 @@ export function useEquityHistory(months = 24) {
 
 // ─── Subscriptions ────────────────────────────────────────────────────────────
 
-export function useSubscriptionsReport(params?: { months?: number; tagged_only?: boolean }) {
+export function useSubscriptionsReport(params?: { months?: number }) {
   return useQuery({
     queryKey: QK.reportSubscriptions(params),
     queryFn: () => reportsApi.subscriptions(params),
@@ -519,6 +519,18 @@ export function useSetSubscriptionStatus() {
     onSuccess: (_, { status }) => {
       qc.invalidateQueries({ queryKey: ['reports'] })
       toast.success(status ? `Marked ${status}` : 'Status reset to auto')
+    },
+    onError: (e: Error) => toast.error(e.message),
+  })
+}
+
+export function useSetSubscriptionCategory() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (data: SubscriptionCategoryUpsert) => subscriptionsApi.setCategory(data),
+    onSuccess: (_, { category_id }) => {
+      qc.invalidateQueries({ queryKey: ['reports'] })
+      toast.success(category_id ? 'Category updated' : 'Category cleared')
     },
     onError: (e: Error) => toast.error(e.message),
   })

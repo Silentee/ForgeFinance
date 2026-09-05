@@ -176,9 +176,6 @@ def get_equity_history(
 def get_subscriptions_report(
     months: int = Query(24, ge=6, le=60, description="Lookback window in months"),
     account_ids: Optional[str] = Query(None, description="Comma-separated account IDs"),
-    tagged_only: bool = Query(
-        False, description="Only transactions categorized as 'Subscriptions'"
-    ),
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
@@ -193,11 +190,11 @@ def get_subscriptions_report(
     candidates the user can choose to track. Per-merchant overrides are
     managed via /subscriptions/rules.
 
-    Transactions categorized as 'Subscriptions' are always included (even a
-    single one-off charge); tagged_only restricts the report to just those.
+    Transactions categorized as 'Subscriptions' are always included, even a
+    single one-off charge.
     """
     account_id_list = _parse_account_ids(account_ids)
-    return build_subscriptions_report(db, user.id, months, account_id_list, tagged_only)
+    return build_subscriptions_report(db, user.id, months, account_id_list)
 
 
 # ---------------------------------------------------------------------------
