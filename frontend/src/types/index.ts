@@ -610,3 +610,9 @@ export interface BalanceSnapshotUpdate {
   notes?: string
 }
 
+// ─── App Metadata ─────────────────────────────────────────────────────────────
+
+export interface AppMeta {
+  app: string
+  version: string
+}

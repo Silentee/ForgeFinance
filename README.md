@@ -374,7 +374,7 @@ powershell -ExecutionPolicy Bypass -File installer\build.ps1
 ```
 This builds the frontend, freezes the backend with PyInstaller, and compiles the installer to `installer\Output\ForgeFinanceSetup-<version>.exe`. Use `-SkipInstaller` to stop after producing the standalone app folder (`installer\dist\ForgeFinance\`) without compiling the installer.
 
-**Versioning:** the version comes from `version` in `backend/pyproject.toml` — bump it there before a release; `build.ps1` stamps the installer filename and Inno Setup metadata from it.
+**Versioning:** `version` in `backend/pyproject.toml` is the single source of truth — it is the only place to bump before a release. `build.ps1` stamps the installer filename and Inno Setup metadata from it; the backend reads it at startup (`app/core/version.py`) for `/docs`, the API root, and `GET /api/v1/meta`; and the sidebar fetches that endpoint to display the version. (`frontend/package.json`'s `version` is deliberately pinned at `0.0.0` — the package is never published, and it is *not* the app version.)
 
 **How it works:** the packaged app runs in "desktop mode" (detected via PyInstaller's `sys.frozen`). In that mode FastAPI serves the bundled React build same-origin and stores the database + secret key in `%LOCALAPPDATA%\ForgeFinance` instead of the (read-only) install directory. Normal source runs and the Docker/Pi deployment are unaffected. Desktop packaging lives in `installer/` and `backend/desktop.py`; the desktop-only Python deps are in the `desktop` dependency group (`uv sync --group desktop`), which Docker never installs.
 

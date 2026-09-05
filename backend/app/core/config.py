@@ -3,11 +3,12 @@ import os
 from pydantic_settings import BaseSettings
 
 from app.core import paths
+from app.core.version import APP_VERSION
 
 
 class Settings(BaseSettings):
     app_name: str = "Forge Finance"
-    app_version: str = "1.0"
+    app_version: str = APP_VERSION
     debug: bool = True
 
     # Database — SQLite by default, easily swappable

@@ -34,6 +34,9 @@ a = Analysis(
         # must ship as data files; init_db resolves them via resource_dir().
         (os.path.join(BACKEND, "alembic"), "alembic"),
         (os.path.join(BACKEND, "alembic.ini"), "."),
+        # Read at runtime by app/core/version.py — the single source of
+        # truth for the app version.
+        (os.path.join(BACKEND, "pyproject.toml"), "."),
         # The built React SPA, served same-origin by FastAPI (see main.py).
         (STAGING_DIST, "frontend_dist"),
     ],

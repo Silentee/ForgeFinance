@@ -3,6 +3,7 @@ from fastapi import APIRouter, Depends
 from app.api.deps import get_current_user
 from app.api.endpoints import (
     auth,
+    meta,
     institutions,
     accounts,
     account_types,
@@ -19,8 +20,10 @@ from app.api.endpoints import (
 
 api_router = APIRouter()
 
-# Auth routes are public (they handle their own auth)
+# Auth routes are public (they handle their own auth); so is /meta, which
+# exposes only the app name and version.
 api_router.include_router(auth.router, prefix="/auth", tags=["Auth"])
+api_router.include_router(meta.router, prefix="/meta", tags=["Meta"])
 
 # All other routes require authentication
 protected = APIRouter(dependencies=[Depends(get_current_user)])

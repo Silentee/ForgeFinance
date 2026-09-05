@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, type FormEvent } from 'react'
 import { NavLink, useLocation } from 'react-router-dom'
 import clsx from 'clsx'
-import { useDemoStatus, useClearDemo, useStartDemo, useCurrentUser, useChangePassword } from '@/hooks'
+import { useDemoStatus, useClearDemo, useStartDemo, useCurrentUser, useChangePassword, useAppMeta } from '@/hooks'
 import { exportApi } from '@/lib/services'
 import { clearToken } from '@/lib/api'
 import { Modal } from '@/components/ui'
@@ -84,6 +84,7 @@ export default function Sidebar() {
   const clearDemo = useClearDemo()
   const startDemo = useStartDemo()
   const { data: currentUser } = useCurrentUser()
+  const { data: appMeta } = useAppMeta()
   const changePassword = useChangePassword()
   const [showConfirm, setShowConfirm] = useState(false)
   const [showSettings, setShowSettings] = useState(false)
@@ -346,7 +347,9 @@ export default function Sidebar() {
           </div>
         )}
         <div className="px-5 py-4 flex items-center justify-between">
-          <p className="text-2xs text-ink-300 font-mono">v1.0 · self-hosted</p>
+          <p className="text-2xs text-ink-300 font-mono">
+            {appMeta?.version ? `v${appMeta.version} · self-hosted` : 'self-hosted'}
+          </p>
           <button
             onClick={() => setShowSettings(s => !s)}
             className={clsx(

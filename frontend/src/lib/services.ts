@@ -16,6 +16,7 @@ import type {
   ManualEntryUpdate, MerchantKeyResolution,
   ImportSource, CSVImportResult, CSVColumnMapping,
   BalanceSnapshot, BalanceSnapshotUpdate,
+  AppMeta,
 } from '@/types'
 
 // ─── Institutions ─────────────────────────────────────────────────────────────
@@ -363,4 +364,11 @@ export const authApi = {
 
   changePassword: (current_password: string, new_password: string) =>
     apiClient.put<{ message: string }>('/auth/password', { current_password, new_password }).then(r => r.data),
+}
+
+// ─── App Metadata ────────────────────────────────────────────────────────────
+
+export const metaApi = {
+  get: () =>
+    apiClient.get<AppMeta>('/meta').then(r => r.data),
 }

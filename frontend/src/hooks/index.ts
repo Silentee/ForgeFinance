@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useQuery, useInfiniteQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { accountsApi, accountTypesApi, balancesApi, transactionsApi, categoriesApi, budgetsApi, reportsApi, subscriptionsApi, importsApi, institutionsApi, demoApi, authApi, type TransactionFilters } from '@/lib/services'
+import { accountsApi, accountTypesApi, balancesApi, transactionsApi, categoriesApi, budgetsApi, reportsApi, subscriptionsApi, importsApi, institutionsApi, demoApi, authApi, metaApi, type TransactionFilters } from '@/lib/services'
 import { getToken } from '@/lib/api'
 import type { AccountCreate, AccountUpdate, AccountTypeCreate, AccountTypeUpdate, AccountTypeDef, BudgetCreate, BudgetUpdate, TransactionUpdate, TransactionCreate, CategoryCreate, CategoryUpdate, CSVColumnMapping, BalanceSnapshotUpdate, SubscriptionRuleUpsert, SubscriptionNicknameUpsert, SubscriptionLinkRequest, SubscriptionUnlinkRequest, SubscriptionCadenceUpsert, SubscriptionStatusUpsert, SubscriptionCategoryUpsert, ManualSubscriptionCreate, ManualEntryUpdate } from '@/types'
 import { formatAccountType } from '@/lib/format'
@@ -37,6 +37,7 @@ export const QK = {
   reportMonthlyTotals: (params?: object) => ['reports', 'monthly-totals', params] as const,
   reportSubscriptions: (params?: object) => ['reports', 'subscriptions', params] as const,
   imports:       (accountId?: number) => ['imports', accountId] as const,
+  meta:          () => ['meta'] as const,
 }
 
 // ─── Institutions ─────────────────────────────────────────────────────────────
@@ -673,6 +674,18 @@ export function useUploadCsv() {
       )
     },
     onError: (e: Error) => toast.error(e.message),
+  })
+}
+
+// ─── App Metadata ────────────────────────────────────────────────────────────
+
+// App name + version, served from backend/pyproject.toml (the single source of
+// truth). Can't change while the tab is open, so it never needs refetching.
+export function useAppMeta() {
+  return useQuery({
+    queryKey: QK.meta(),
+    queryFn: metaApi.get,
+    staleTime: Infinity,
   })
 }
 
