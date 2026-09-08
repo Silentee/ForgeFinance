@@ -18,7 +18,7 @@ import {
   useDebouncedValue,
 } from '@/hooks'
 import { transactionsApi } from '@/lib/services'
-import { Button, Card, CategorySelect, CheckboxRow, FilterDropdown, Modal, Spinner } from '@/components/ui'
+import { Button, Card, CategorySelect, CheckboxRow, FilterDropdown, Modal, PageHeader, Spinner } from '@/components/ui'
 import {
   formatCurrency,
   formatCurrencyWhole,
@@ -1028,7 +1028,7 @@ function AddSubscriptionDialog({
   )
 }
 
-export default function SubscriptionsTab() {
+export default function SubscriptionsPage() {
   const [months, setMonths] = useState(24)
   const [activeOnly, setActiveOnly] = useState(false)
   const [showDismissed, setShowDismissed] = useState(false)
@@ -1077,8 +1077,11 @@ export default function SubscriptionsTab() {
 
   if (isLoading || !report) {
     return (
-      <div className="flex justify-center py-8">
-        <Spinner size="lg" />
+      <div className="space-y-6 animate-slide-up">
+        <PageHeader title="Subscriptions" />
+        <div className="flex justify-center py-8">
+          <Spinner size="lg" />
+        </div>
       </div>
     )
   }
@@ -1178,235 +1181,238 @@ export default function SubscriptionsTab() {
   const priceIncreaseCount = filteredSubs.filter(s => s.price_increased).length
 
   return (
-    <div className="space-y-4">
-      <div className="flex flex-wrap items-center gap-2 text-xs text-ink-300">
-        <span className="text-ink-500">Category:</span>
-        <FilterDropdown
-          disabled={!categories?.length}
-          isActive={effectiveFilter != null && !allSelected}
-          buttonLabel={filterLabel}
-        >
-          <CheckboxRow
-            checked={allSelected}
-            indeterminate={
-              effectiveFilter != null &&
-              !allSelected &&
-              (effectiveFilter.categoryIds.length > 0 || effectiveFilter.includeUncategorized)
-            }
-            label="All categories"
-            bold
-            onToggle={() =>
-              updateFilter(base => {
-                const isAll =
-                  base.includeUncategorized && allChildIds.every(id => base.categoryIds.includes(id))
-                return isAll
-                  ? { categoryIds: [], includeUncategorized: false }
-                  : { categoryIds: [...allChildIds], includeUncategorized: true }
-              })
-            }
-          />
-          <div className="h-px bg-white/[0.06] my-1" />
-          <CheckboxRow
-            checked={effectiveFilter?.includeUncategorized ?? true}
-            label="Uncategorized"
-            onToggle={() =>
-              updateFilter(base => ({ ...base, includeUncategorized: !base.includeUncategorized }))
-            }
-          />
-          <div className="h-px bg-white/[0.06] my-1" />
-          {parents.map(parent => {
-            const children = sortBySortOrder(parent.children)
-            const childIds = children.map(c => c.id)
-            const selectedCount = childIds.filter(id => selectedSet?.has(id)).length
-            return (
-              <div key={parent.id} className="py-1">
-                <CheckboxRow
-                  checked={selectedCount === childIds.length}
-                  indeterminate={selectedCount > 0 && selectedCount < childIds.length}
-                  label={parent.name}
-                  sublabel={`${selectedCount}/${childIds.length} selected`}
-                  bold
-                  onToggle={() => toggleGroup(childIds)}
-                />
-                <div className="pl-6">
-                  {children.map(child => (
-                    <CheckboxRow
-                      key={child.id}
-                      checked={selectedSet?.has(child.id) ?? false}
-                      label={child.name}
-                      onToggle={() => toggleChild(child.id)}
-                    />
-                  ))}
-                </div>
-              </div>
-            )
-          })}
-        </FilterDropdown>
-        <button
-          type="button"
-          onClick={() => setActiveOnly(v => !v)}
-          title="Hide lapsed and inactive subscriptions"
-          className={clsx(
-            'bg-surface-700 rounded-lg px-3 py-2 text-sm transition-colors border',
-            activeOnly
-              ? 'border-amber-400/40 bg-amber-400/5 text-amber-300'
-              : 'border-white/[0.08] text-ink-100'
-          )}
-        >
-          Active only
-        </button>
-        <div className="ml-auto flex items-center gap-2">
-          <span>Lookback:</span>
-          <select
-            value={months}
-            onChange={e => setMonths(Number(e.target.value))}
-            className="bg-surface-700 border border-white/[0.08] rounded px-2 py-1 text-ink-100 focus:outline-none focus:border-amber-400/40"
+    <div className="space-y-6 animate-slide-up">
+      <PageHeader title="Subscriptions" />
+      <div className="space-y-4">
+        <div className="flex flex-wrap items-center gap-2 text-xs text-ink-300">
+          <span className="text-ink-500">Category:</span>
+          <FilterDropdown
+            disabled={!categories?.length}
+            isActive={effectiveFilter != null && !allSelected}
+            buttonLabel={filterLabel}
           >
-            <option value={12}>12 months</option>
-            <option value={24}>24 months</option>
-            <option value={36}>36 months</option>
-          </select>
-          <Button size="sm" variant="primary" onClick={() => setShowAdd(true)}>
-            Add subscription
-          </Button>
-        </div>
-      </div>
-
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <Card padding={false} className="p-4">
-          <div className="label text-ink-200">Monthly Recurring</div>
-          <div className="font-mono text-xl mt-2 text-teal-400">
-            {formatCurrency(totalMonthly)}
-          </div>
-          <div className="text-xs text-ink-300 mt-1">across active subscriptions</div>
-        </Card>
-        <Card padding={false} className="p-4">
-          <div className="label text-ink-200">Annual Recurring</div>
-          <div className="font-mono text-xl mt-2 text-ink-100">
-            {formatCurrencyWhole(totalAnnual)}
-          </div>
-          <div className="text-xs text-ink-300 mt-1">what a year of subscriptions costs</div>
-        </Card>
-        <Card padding={false} className="p-4">
-          <div className="label text-ink-200">Active Subscriptions</div>
-          <div className="font-mono text-xl mt-2 text-ink-100">{activeSubs.length}</div>
-          <div className="text-xs mt-1 space-x-3">
-            {lapsedCount > 0 && (
-              <span className="text-amber-400">{lapsedCount} lapsed</span>
-            )}
-            {inactiveCount > 0 && (
-              <span className="text-amber-400">{inactiveCount} inactive</span>
-            )}
-            {priceIncreaseCount > 0 && (
-              <span className="text-rose-400">{priceIncreaseCount} price increase{priceIncreaseCount > 1 ? 's' : ''}</span>
-            )}
-            {lapsedCount === 0 && inactiveCount === 0 && priceIncreaseCount === 0 && (
-              <span className="text-ink-300">no lapses or price increases</span>
-            )}
-          </div>
-        </Card>
-      </div>
-
-      <Card>
-        <h4 className="label mb-3">Detected Subscriptions</h4>
-        {visibleSubs.length === 0 ? (
-          <p className="text-xs text-ink-400 py-4">
-            {report.subscriptions.length > 0
-              ? 'No subscriptions match the current filters.'
-              : 'No recurring charges detected yet. Subscriptions appear once the same merchant has been charged a few times at a regular interval — import more transaction history, or add one manually.'}
-          </p>
-        ) : (
-          <div className="overflow-x-auto">
-            <SubscriptionRows
-              items={visibleSubs}
-              onEdit={item => setEditingKey(item.merchant_key)}
-              action={rowAction}
+            <CheckboxRow
+              checked={allSelected}
+              indeterminate={
+                effectiveFilter != null &&
+                !allSelected &&
+                (effectiveFilter.categoryIds.length > 0 || effectiveFilter.includeUncategorized)
+              }
+              label="All categories"
+              bold
+              onToggle={() =>
+                updateFilter(base => {
+                  const isAll =
+                    base.includeUncategorized && allChildIds.every(id => base.categoryIds.includes(id))
+                  return isAll
+                    ? { categoryIds: [], includeUncategorized: false }
+                    : { categoryIds: [...allChildIds], includeUncategorized: true }
+                })
+              }
             />
-          </div>
-        )}
-      </Card>
-
-      {visibleDismissed.length > 0 && (
-        <Card>
+            <div className="h-px bg-white/[0.06] my-1" />
+            <CheckboxRow
+              checked={effectiveFilter?.includeUncategorized ?? true}
+              label="Uncategorized"
+              onToggle={() =>
+                updateFilter(base => ({ ...base, includeUncategorized: !base.includeUncategorized }))
+              }
+            />
+            <div className="h-px bg-white/[0.06] my-1" />
+            {parents.map(parent => {
+              const children = sortBySortOrder(parent.children)
+              const childIds = children.map(c => c.id)
+              const selectedCount = childIds.filter(id => selectedSet?.has(id)).length
+              return (
+                <div key={parent.id} className="py-1">
+                  <CheckboxRow
+                    checked={selectedCount === childIds.length}
+                    indeterminate={selectedCount > 0 && selectedCount < childIds.length}
+                    label={parent.name}
+                    sublabel={`${selectedCount}/${childIds.length} selected`}
+                    bold
+                    onToggle={() => toggleGroup(childIds)}
+                  />
+                  <div className="pl-6">
+                    {children.map(child => (
+                      <CheckboxRow
+                        key={child.id}
+                        checked={selectedSet?.has(child.id) ?? false}
+                        label={child.name}
+                        onToggle={() => toggleChild(child.id)}
+                      />
+                    ))}
+                  </div>
+                </div>
+              )
+            })}
+          </FilterDropdown>
           <button
-            onClick={() => setShowDismissed(v => !v)}
-            className="flex w-full items-center justify-between text-left"
+            type="button"
+            onClick={() => setActiveOnly(v => !v)}
+            title="Hide lapsed and inactive subscriptions"
+            className={clsx(
+              'bg-surface-700 rounded-lg px-3 py-2 text-sm transition-colors border',
+              activeOnly
+                ? 'border-amber-400/40 bg-amber-400/5 text-amber-300'
+                : 'border-white/[0.08] text-ink-100'
+            )}
           >
-            <h4 className="label">Dismissed ({visibleDismissed.length})</h4>
-            <span className="text-xs text-ink-400">{showDismissed ? 'Hide' : 'Show'}</span>
+            Active only
           </button>
-          {showDismissed && (
-            <div className="overflow-x-auto mt-3">
+          <div className="ml-auto flex items-center gap-2">
+            <span>Lookback:</span>
+            <select
+              value={months}
+              onChange={e => setMonths(Number(e.target.value))}
+              className="bg-surface-700 border border-white/[0.08] rounded px-2 py-1 text-ink-100 focus:outline-none focus:border-amber-400/40"
+            >
+              <option value={12}>12 months</option>
+              <option value={24}>24 months</option>
+              <option value={36}>36 months</option>
+            </select>
+            <Button size="sm" variant="primary" onClick={() => setShowAdd(true)}>
+              Add subscription
+            </Button>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <Card padding={false} className="p-4">
+            <div className="label text-ink-200">Monthly Recurring</div>
+            <div className="font-mono text-xl mt-2 text-teal-400">
+              {formatCurrency(totalMonthly)}
+            </div>
+            <div className="text-xs text-ink-300 mt-1">across active subscriptions</div>
+          </Card>
+          <Card padding={false} className="p-4">
+            <div className="label text-ink-200">Annual Recurring</div>
+            <div className="font-mono text-xl mt-2 text-ink-100">
+              {formatCurrencyWhole(totalAnnual)}
+            </div>
+            <div className="text-xs text-ink-300 mt-1">what a year of subscriptions costs</div>
+          </Card>
+          <Card padding={false} className="p-4">
+            <div className="label text-ink-200">Active Subscriptions</div>
+            <div className="font-mono text-xl mt-2 text-ink-100">{activeSubs.length}</div>
+            <div className="text-xs mt-1 space-x-3">
+              {lapsedCount > 0 && (
+                <span className="text-amber-400">{lapsedCount} lapsed</span>
+              )}
+              {inactiveCount > 0 && (
+                <span className="text-amber-400">{inactiveCount} inactive</span>
+              )}
+              {priceIncreaseCount > 0 && (
+                <span className="text-rose-400">{priceIncreaseCount} price increase{priceIncreaseCount > 1 ? 's' : ''}</span>
+              )}
+              {lapsedCount === 0 && inactiveCount === 0 && priceIncreaseCount === 0 && (
+                <span className="text-ink-300">no lapses or price increases</span>
+              )}
+            </div>
+          </Card>
+        </div>
+
+        <Card>
+          <h4 className="label mb-3">Detected Subscriptions</h4>
+          {visibleSubs.length === 0 ? (
+            <p className="text-xs text-ink-400 py-4">
+              {report.subscriptions.length > 0
+                ? 'No subscriptions match the current filters.'
+                : 'No recurring charges detected yet. Subscriptions appear once the same merchant has been charged a few times at a regular interval — import more transaction history, or add one manually.'}
+            </p>
+          ) : (
+            <div className="overflow-x-auto">
               <SubscriptionRows
-                items={visibleDismissed}
+                items={visibleSubs}
                 onEdit={item => setEditingKey(item.merchant_key)}
-                action={item => ({
-                  label: 'Restore',
-                  onClick: () => item.rule_id != null && deleteRule.mutate(item.rule_id),
-                  disabled: busy,
-                })}
+                action={rowAction}
               />
             </div>
           )}
         </Card>
-      )}
 
-      {filteredCandidates.length > 0 && (
-        <Card>
-          <button
-            onClick={() => setShowCandidates(v => !v)}
-            className="flex w-full items-center justify-between text-left"
-          >
-            <h4 className="label">Possible Subscriptions ({filteredCandidates.length})</h4>
-            <span className="text-xs text-ink-400">{showCandidates ? 'Hide' : 'Show'}</span>
-          </button>
-          {showCandidates && (
-            <div className="mt-3 space-y-2">
-              <p className="text-2xs text-ink-400">
-                Repeated charges that didn't pass detection. Track one to include it in the
-                report anyway.
-              </p>
-              {filteredCandidates.map(c => (
-                <div
-                  key={c.merchant_key}
-                  className="flex items-center justify-between gap-3 rounded border border-white/[0.06] px-3 py-2"
-                >
-                  <div className="min-w-0">
-                    <div className="text-sm text-ink-100 truncate" title={c.display_name}>
-                      {displayName(c)}
-                    </div>
-                    <div className="text-2xs text-ink-400">
-                      {c.occurrence_count} charges · median {formatCurrency(c.median_amount)} ·
-                      last {formatDateShort(c.last_charged)}
-                      {c.category_name ? ` · ${c.category_name}` : ''} · {CANDIDATE_REASONS[c.reason]}
-                    </div>
-                  </div>
-                  <button
-                    onClick={() =>
-                      upsertRule.mutate({ merchant_key: c.merchant_key, rule: 'include' })
-                    }
-                    disabled={busy}
-                    className="shrink-0 text-xs text-teal-400 hover:text-teal-300 disabled:opacity-50"
+        {visibleDismissed.length > 0 && (
+          <Card>
+            <button
+              onClick={() => setShowDismissed(v => !v)}
+              className="flex w-full items-center justify-between text-left"
+            >
+              <h4 className="label">Dismissed ({visibleDismissed.length})</h4>
+              <span className="text-xs text-ink-400">{showDismissed ? 'Hide' : 'Show'}</span>
+            </button>
+            {showDismissed && (
+              <div className="overflow-x-auto mt-3">
+                <SubscriptionRows
+                  items={visibleDismissed}
+                  onEdit={item => setEditingKey(item.merchant_key)}
+                  action={item => ({
+                    label: 'Restore',
+                    onClick: () => item.rule_id != null && deleteRule.mutate(item.rule_id),
+                    disabled: busy,
+                  })}
+                />
+              </div>
+            )}
+          </Card>
+        )}
+
+        {filteredCandidates.length > 0 && (
+          <Card>
+            <button
+              onClick={() => setShowCandidates(v => !v)}
+              className="flex w-full items-center justify-between text-left"
+            >
+              <h4 className="label">Possible Subscriptions ({filteredCandidates.length})</h4>
+              <span className="text-xs text-ink-400">{showCandidates ? 'Hide' : 'Show'}</span>
+            </button>
+            {showCandidates && (
+              <div className="mt-3 space-y-2">
+                <p className="text-2xs text-ink-400">
+                  Repeated charges that didn't pass detection. Track one to include it in the
+                  report anyway.
+                </p>
+                {filteredCandidates.map(c => (
+                  <div
+                    key={c.merchant_key}
+                    className="flex items-center justify-between gap-3 rounded border border-white/[0.06] px-3 py-2"
                   >
-                    Track
-                  </button>
-                </div>
-              ))}
-            </div>
-          )}
-        </Card>
-      )}
+                    <div className="min-w-0">
+                      <div className="text-sm text-ink-100 truncate" title={c.display_name}>
+                        {displayName(c)}
+                      </div>
+                      <div className="text-2xs text-ink-400">
+                        {c.occurrence_count} charges · median {formatCurrency(c.median_amount)} ·
+                        last {formatDateShort(c.last_charged)}
+                        {c.category_name ? ` · ${c.category_name}` : ''} · {CANDIDATE_REASONS[c.reason]}
+                      </div>
+                    </div>
+                    <button
+                      onClick={() =>
+                        upsertRule.mutate({ merchant_key: c.merchant_key, rule: 'include' })
+                      }
+                      disabled={busy}
+                      className="shrink-0 text-xs text-teal-400 hover:text-teal-300 disabled:opacity-50"
+                    >
+                      Track
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </Card>
+        )}
 
-      {editingItem && (
-        <EditSubscriptionDialog
-          key={editingItem.merchant_key}
-          item={editingItem}
-          report={report}
-          onClose={() => setEditingKey(null)}
-        />
-      )}
+        {editingItem && (
+          <EditSubscriptionDialog
+            key={editingItem.merchant_key}
+            item={editingItem}
+            report={report}
+            onClose={() => setEditingKey(null)}
+          />
+        )}
 
-      {showAdd && <AddSubscriptionDialog report={report} onClose={() => setShowAdd(false)} />}
+        {showAdd && <AddSubscriptionDialog report={report} onClose={() => setShowAdd(false)} />}
+      </div>
     </div>
   )
 }

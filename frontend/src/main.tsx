@@ -11,6 +11,7 @@ import Dashboard    from '@/pages/Dashboard'
 import AccountsPage from '@/pages/Accounts'
 import TransactionsPage from '@/pages/Transactions'
 import BudgetPage   from '@/pages/Budget'
+import SubscriptionsPage from '@/pages/Subscriptions'
 import ReportsPage  from '@/pages/Reports'
 import ImportPage   from '@/pages/Import'
 import LoginPage    from '@/pages/Login'
@@ -71,6 +72,7 @@ function AuthGate() {
         <Route path="accounts"     element={<AccountsPage />} />
         <Route path="transactions" element={<TransactionsPage />} />
         <Route path="budget"       element={<BudgetPage />} />
+        <Route path="subscriptions" element={<SubscriptionsPage />} />
         <Route path="reports/:reportTab" element={<ReportsPage />} />
         <Route path="import"       element={<ImportPage />} />
       </Route>

@@ -56,7 +56,7 @@ backend/app/
 └── core/config.py    # Settings loaded from .env
 ```
 
-**API Base:** `/api/v1`. Routes: `/auth`, `/institutions`, `/accounts`, `/account-types`, `/transactions`, `/categories`, `/budgets`, `/imports`, `/balances`, `/reports`, `/export`, `/demo`, `/meta`. Everything except `/auth` and `/meta` requires a Bearer token (see Auth below).
+**API Base:** `/api/v1`. Routes: `/auth`, `/institutions`, `/accounts`, `/account-types`, `/transactions`, `/categories`, `/budgets`, `/imports`, `/balances`, `/reports`, `/subscriptions`, `/export`, `/demo`, `/meta`. Everything except `/auth` and `/meta` requires a Bearer token (see Auth below).
 
 **Key Models:**
 - `Institution` → `Account` → `Transaction` (main hierarchy)
@@ -74,7 +74,7 @@ backend/app/
 
 ```
 frontend/src/
-├── pages/            # Dashboard, Accounts, Transactions, Budget, Reports, Import
+├── pages/            # Dashboard, Accounts, Transactions, Budget, Subscriptions, Reports, Import
 ├── components/       # Layout (RootLayout, Sidebar) and UI primitives
 ├── hooks/            # TanStack Query hooks for data fetching
 ├── lib/
