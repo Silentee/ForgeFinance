@@ -16,7 +16,9 @@ from app.models.enums import TransactionType
 from app.schemas.reports import (
     BudgetLineItem,
     BudgetReport,
+    CategoryMonthlySeries,
     CategoryTrendSeries,
+    CategoryTrendsReport,
     EquityDataPoint,
     EquityHistoryReport,
     LinkedEquityPair,
@@ -559,6 +561,80 @@ def build_spending_trends(
         monthly_expense_totals=[round(monthly_expenses[mk], 2) for mk in month_keys],
         monthly_net_totals=[round(monthly_income[mk] - monthly_expenses[mk], 2) for mk in month_keys],
     )
+
+
+# ---------------------------------------------------------------------------
+# Category trends — per-category monthly actual vs. budget
+# ---------------------------------------------------------------------------
+
+def build_category_trends(
+    db: Session,
+    months: int = 6,
+    end_year: Optional[int] = None,
+    end_month: Optional[int] = None,
+    account_ids: Optional[list[int]] = None,
+) -> CategoryTrendsReport:
+    """Monthly actual spend and budget for every expense category in the
+    window. Unlike build_spending_trends there is no top-N cap or 'Other'
+    bucket, so any selection of categories can be summed client-side."""
+    today = date.today()
+    anchor_year = end_year if end_year is not None else today.year
+    anchor_month = end_month if end_month is not None else today.month
+
+    periods: list[tuple[int, int]] = []
+    for i in range(months - 1, -1, -1):
+        periods.append(_add_months(anchor_year, anchor_month, -i))
+
+    month_keys = [_month_key(y, m) for y, m in periods]
+    month_labels = [_short_month_label(y, m) for y, m in periods]
+    period_index = {p: i for i, p in enumerate(periods)}
+
+    agg = _aggregate_monthly(db, periods, account_ids)
+
+    # Budgets are stored per month; a month without a row is simply 0.
+    first_ym = periods[0][0] * 12 + periods[0][1]
+    last_ym = periods[-1][0] * 12 + periods[-1][1]
+    budgets_by_cat: dict[int, list[float]] = defaultdict(lambda: [0.0] * len(periods))
+    budget_q = db.query(Budget).filter(
+        Budget.year * 12 + Budget.month >= first_ym,
+        Budget.year * 12 + Budget.month <= last_ym,
+    )
+    for b in budget_q.all():
+        idx = period_index.get((b.year, b.month))
+        if idx is not None:
+            budgets_by_cat[b.category_id][idx] += float(b.amount)
+
+    categories = _load_categories(db, set(agg.keys()) | set(budgets_by_cat.keys()))
+    parents = _load_categories(db, {c.parent_id for c in categories.values() if c.parent_id})
+
+    series: list[CategoryMonthlySeries] = []
+    for cat_id in set(agg.keys()) | set(budgets_by_cat.keys()):
+        cat = categories.get(cat_id) if cat_id is not None else None
+        if cat and cat.is_income:
+            continue
+        month_data = agg.get(cat_id)
+        actuals = [
+            round(month_data[mk]["debits"] - month_data[mk]["credits"], 2) if month_data else 0.0
+            for mk in month_keys
+        ]
+        budgets = [round(v, 2) for v in budgets_by_cat.get(cat_id, [0.0] * len(periods))]
+        if not any(actuals) and not any(budgets):
+            continue
+        series.append(CategoryMonthlySeries(
+            category_id=cat_id,
+            category_name=cat.name if cat else "Uncategorized",
+            parent_category_name=(
+                parents[cat.parent_id].name
+                if (cat and cat.parent_id and cat.parent_id in parents)
+                else None
+            ),
+            actuals=actuals,
+            budgets=budgets,
+        ))
+
+    series.sort(key=lambda s: (s.parent_category_name or "", s.category_name.lower()))
+
+    return CategoryTrendsReport(months=month_keys, month_labels=month_labels, series=series)
 
 
 # ---------------------------------------------------------------------------

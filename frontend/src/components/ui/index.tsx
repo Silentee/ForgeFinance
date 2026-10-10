@@ -444,3 +444,123 @@ export function CategorySelect({ value, onChange, categories, disabled }: {
     </select>
   )
 }
+
+// ─── Category filter dropdown — two-tier parent/child checkbox picker ────────
+
+export interface CategoryFilter {
+  categoryIds: number[]
+  includeUncategorized: boolean
+}
+
+// `value` null = the user hasn't touched the filter yet, so `defaultValue`
+// applies; both are null until categories load, which disables the control.
+export function CategoryFilterDropdown({ categories, value, defaultValue, onChange }: {
+  categories: Category[] | undefined
+  value: CategoryFilter | null
+  defaultValue: CategoryFilter | null
+  onChange: (next: CategoryFilter) => void
+}) {
+  const parents = sortBySortOrder((categories ?? []).filter(c => c.children.length > 0))
+  const allChildIds = parents.flatMap(p => p.children.map(c => c.id))
+  const effective = value ?? defaultValue
+  const selectedSet = new Set(effective?.categoryIds ?? [])
+
+  const update = (next: (base: CategoryFilter) => CategoryFilter) => {
+    if (effective) onChange(next(effective))
+  }
+  const withIds = (base: CategoryFilter, ids: Set<number>): CategoryFilter =>
+    ({ ...base, categoryIds: Array.from(ids.values()).sort((a, b) => a - b) })
+  const toggleGroup = (childIds: number[]) =>
+    update(base => {
+      const ids = new Set(base.categoryIds)
+      const isAll = childIds.every(id => ids.has(id))
+      for (const id of childIds) {
+        if (isAll) ids.delete(id)
+        else ids.add(id)
+      }
+      return withIds(base, ids)
+    })
+  const toggleChild = (id: number) =>
+    update(base => {
+      const ids = new Set(base.categoryIds)
+      if (ids.has(id)) ids.delete(id)
+      else ids.add(id)
+      return withIds(base, ids)
+    })
+
+  const allSelected =
+    effective != null && effective.includeUncategorized && allChildIds.every(id => selectedSet.has(id))
+
+  const buttonLabel = (() => {
+    if (!effective || allSelected) return 'All categories'
+    const count = effective.categoryIds.length + (effective.includeUncategorized ? 1 : 0)
+    if (count === 0) return 'None selected'
+    if (count === 1 && effective.includeUncategorized) return 'Uncategorized'
+    if (count === 1) {
+      const id = effective.categoryIds[0]
+      for (const p of parents) for (const c of p.children) if (c.id === id) return c.name
+      return '1 selected'
+    }
+    return `${count} selected`
+  })()
+
+  return (
+    <FilterDropdown
+      disabled={!categories?.length}
+      isActive={effective != null && !allSelected}
+      buttonLabel={buttonLabel}
+    >
+      <CheckboxRow
+        checked={allSelected}
+        indeterminate={
+          effective != null &&
+          !allSelected &&
+          (effective.categoryIds.length > 0 || effective.includeUncategorized)
+        }
+        label="All categories"
+        bold
+        onToggle={() =>
+          update(() =>
+            allSelected
+              ? { categoryIds: [], includeUncategorized: false }
+              : { categoryIds: [...allChildIds], includeUncategorized: true }
+          )
+        }
+      />
+      <div className="h-px bg-white/[0.06] my-1" />
+      <CheckboxRow
+        checked={effective?.includeUncategorized ?? true}
+        label="Uncategorized"
+        onToggle={() => update(base => ({ ...base, includeUncategorized: !base.includeUncategorized }))}
+      />
+      <div className="h-px bg-white/[0.06] my-1" />
+      {parents.map(parent => {
+        const children = sortBySortOrder(parent.children)
+        const childIds = children.map(c => c.id)
+        const selectedCount = childIds.filter(id => selectedSet.has(id)).length
+        return (
+          <div key={parent.id} className="py-1">
+            <CheckboxRow
+              checked={selectedCount === childIds.length}
+              indeterminate={selectedCount > 0 && selectedCount < childIds.length}
+              label={parent.name}
+              sublabel={`${selectedCount}/${childIds.length} selected`}
+              bold
+              onToggle={() => toggleGroup(childIds)}
+            />
+            <div className="pl-6">
+              {children.map(child => (
+                <CheckboxRow
+                  key={child.id}
+                  checked={selectedSet.has(child.id)}
+                  label={child.name}
+                  onToggle={() => toggleChild(child.id)}
+                />
+              ))}
+            </div>
+          </div>
+        )
+      })}
+    </FilterDropdown>
+  )
+}

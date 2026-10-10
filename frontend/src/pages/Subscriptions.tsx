@@ -18,7 +18,10 @@ import {
   useDebouncedValue,
 } from '@/hooks'
 import { transactionsApi } from '@/lib/services'
-import { Button, Card, CategorySelect, CheckboxRow, FilterDropdown, Modal, PageHeader, Spinner } from '@/components/ui'
+import {
+  Button, Card, CategoryFilterDropdown, CategorySelect, CheckboxRow, Modal, PageHeader, Spinner,
+  type CategoryFilter,
+} from '@/components/ui'
 import {
   formatCurrency,
   formatCurrencyWhole,
@@ -126,11 +129,6 @@ const DEFAULT_HIDDEN_GROUPS = new Set(['essential', 'utilities'])
 
 const INPUT_CLASS =
   'w-full bg-surface-700 border border-white/[0.08] rounded-lg px-3 py-2 text-sm text-ink-100 focus:outline-none focus:border-amber-400/40'
-
-interface CategoryFilter {
-  categoryIds: number[]
-  includeUncategorized: boolean
-}
 
 // The user-chosen nickname wins over the derived merchant name everywhere.
 const displayName = (x: { nickname?: string; display_name: string }) =>
@@ -1052,11 +1050,6 @@ export default function SubscriptionsPage() {
   )
   const allChildIds = useMemo(() => parents.flatMap(p => p.children.map(c => c.id)), [parents])
   const knownChildIds = useMemo(() => new Set(allChildIds), [allChildIds])
-  const childNameById = useMemo(() => {
-    const m = new Map<number, string>()
-    for (const p of parents) for (const c of p.children) m.set(c.id, c.name)
-    return m
-  }, [parents])
 
   const defaultFilter = useMemo<CategoryFilter | null>(() => {
     if (!categories) return null
@@ -1087,44 +1080,6 @@ export default function SubscriptionsPage() {
   }
 
   const busy = upsertRule.isPending || deleteRule.isPending || deleteManual.isPending
-
-  const updateFilter = (next: (base: CategoryFilter) => CategoryFilter) => {
-    setCategoryFilter(prev => {
-      const base = prev ?? defaultFilter
-      return base ? next(base) : prev
-    })
-  }
-  const toggleGroup = (childIds: number[]) =>
-    updateFilter(base => {
-      const ids = new Set(base.categoryIds)
-      const isAll = childIds.every(id => ids.has(id))
-      for (const id of childIds) {
-        if (isAll) ids.delete(id)
-        else ids.add(id)
-      }
-      return { ...base, categoryIds: Array.from(ids.values()).sort((a, b) => a - b) }
-    })
-  const toggleChild = (id: number) =>
-    updateFilter(base => {
-      const ids = new Set(base.categoryIds)
-      if (ids.has(id)) ids.delete(id)
-      else ids.add(id)
-      return { ...base, categoryIds: Array.from(ids.values()).sort((a, b) => a - b) }
-    })
-
-  const allSelected =
-    effectiveFilter != null &&
-    effectiveFilter.includeUncategorized &&
-    allChildIds.every(id => selectedSet!.has(id))
-
-  const filterLabel = (() => {
-    if (!effectiveFilter || allSelected) return 'All categories'
-    const count = effectiveFilter.categoryIds.length + (effectiveFilter.includeUncategorized ? 1 : 0)
-    if (count === 0) return 'None selected'
-    if (count === 1 && effectiveFilter.includeUncategorized) return 'Uncategorized'
-    if (count === 1) return childNameById.get(effectiveFilter.categoryIds[0]) ?? '1 selected'
-    return `${count} selected`
-  })()
 
   // Unknown ids (hidden categories, childless parents like the seeded
   // "Uncategorized") bucket under the Uncategorized row so nothing vanishes.
@@ -1186,67 +1141,12 @@ export default function SubscriptionsPage() {
       <div className="space-y-4">
         <div className="flex flex-wrap items-center gap-2 text-xs text-ink-300">
           <span className="text-ink-500">Category:</span>
-          <FilterDropdown
-            disabled={!categories?.length}
-            isActive={effectiveFilter != null && !allSelected}
-            buttonLabel={filterLabel}
-          >
-            <CheckboxRow
-              checked={allSelected}
-              indeterminate={
-                effectiveFilter != null &&
-                !allSelected &&
-                (effectiveFilter.categoryIds.length > 0 || effectiveFilter.includeUncategorized)
-              }
-              label="All categories"
-              bold
-              onToggle={() =>
-                updateFilter(base => {
-                  const isAll =
-                    base.includeUncategorized && allChildIds.every(id => base.categoryIds.includes(id))
-                  return isAll
-                    ? { categoryIds: [], includeUncategorized: false }
-                    : { categoryIds: [...allChildIds], includeUncategorized: true }
-                })
-              }
-            />
-            <div className="h-px bg-white/[0.06] my-1" />
-            <CheckboxRow
-              checked={effectiveFilter?.includeUncategorized ?? true}
-              label="Uncategorized"
-              onToggle={() =>
-                updateFilter(base => ({ ...base, includeUncategorized: !base.includeUncategorized }))
-              }
-            />
-            <div className="h-px bg-white/[0.06] my-1" />
-            {parents.map(parent => {
-              const children = sortBySortOrder(parent.children)
-              const childIds = children.map(c => c.id)
-              const selectedCount = childIds.filter(id => selectedSet?.has(id)).length
-              return (
-                <div key={parent.id} className="py-1">
-                  <CheckboxRow
-                    checked={selectedCount === childIds.length}
-                    indeterminate={selectedCount > 0 && selectedCount < childIds.length}
-                    label={parent.name}
-                    sublabel={`${selectedCount}/${childIds.length} selected`}
-                    bold
-                    onToggle={() => toggleGroup(childIds)}
-                  />
-                  <div className="pl-6">
-                    {children.map(child => (
-                      <CheckboxRow
-                        key={child.id}
-                        checked={selectedSet?.has(child.id) ?? false}
-                        label={child.name}
-                        onToggle={() => toggleChild(child.id)}
-                      />
-                    ))}
-                  </div>
-                </div>
-              )
-            })}
-          </FilterDropdown>
+          <CategoryFilterDropdown
+            categories={categories}
+            value={categoryFilter}
+            defaultValue={defaultFilter}
+            onChange={setCategoryFilter}
+          />
           <button
             type="button"
             onClick={() => setActiveOnly(v => !v)}

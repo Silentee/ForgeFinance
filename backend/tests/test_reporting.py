@@ -4,6 +4,7 @@ from app.models import Account, Budget, Category, Transaction
 from app.models.enums import TransactionType
 from app.services.reporting import (
     build_budget_report,
+    build_category_trends,
     build_monthly_totals,
     build_spending_averages,
     build_spending_trends,
@@ -124,3 +125,47 @@ def test_shared_aggregation_builders_agree(db):
     assert groceries_avg.avg_1m == 150.0
     salary_avg = next(l for l in avgs.income_lines if l.category_name == "Salary")
     assert salary_avg.avg_1m == 1000.0
+
+
+def test_category_trends_actuals_and_budgets_per_month(db):
+    acct, salary, groceries = _setup(db)
+    _tx(db, acct, salary, 1000.0, TransactionType.CREDIT, date(2026, 5, 1))
+    _tx(db, acct, groceries, 200.0, TransactionType.DEBIT, date(2026, 4, 10))
+    _tx(db, acct, groceries, 300.0, TransactionType.DEBIT, date(2026, 6, 10))
+    _tx(db, acct, groceries, 50.0, TransactionType.CREDIT, date(2026, 6, 12))  # refund
+    db.add(Budget(category_id=groceries.id, year=2026, month=4, amount=250.0))
+    db.add(Budget(category_id=groceries.id, year=2026, month=6, amount=275.0))
+    db.add(Budget(category_id=groceries.id, year=2026, month=7, amount=999.0))  # outside window
+    db.commit()
+
+    report = build_category_trends(db, months=3, end_year=2026, end_month=6)
+
+    assert report.months == ["2026-04", "2026-05", "2026-06"]
+    # Income categories are excluded
+    assert [s.category_name for s in report.series] == ["Groceries"]
+    groceries_series = report.series[0]
+    assert groceries_series.parent_category_name == "Essential"
+    assert groceries_series.actuals == [200.0, 0.0, 250.0]
+    # May has no budget row → 0
+    assert groceries_series.budgets == [250.0, 0.0, 275.0]
+
+
+def test_category_trends_budget_only_and_annualized(db):
+    acct, _salary, groceries = _setup(db)
+    dining = Category(name="Dining", is_income=False, parent_id=groceries.parent_id)
+    db.add(dining)
+    db.flush()
+    _tx(db, acct, groceries, 1200.0, TransactionType.DEBIT, date(2026, 1, 15), is_annualized=True)
+    _tx(db, acct, None, 40.0, TransactionType.DEBIT, date(2026, 2, 3))
+    # A budgeted category with no spending still appears
+    db.add(Budget(category_id=dining.id, year=2026, month=2, amount=80.0))
+    db.commit()
+
+    report = build_category_trends(db, months=2, end_year=2026, end_month=2)
+    by_name = {s.category_name: s for s in report.series}
+
+    assert by_name["Groceries"].actuals == [100.0, 100.0]
+    assert by_name["Dining"].actuals == [0.0, 0.0]
+    assert by_name["Dining"].budgets == [0.0, 80.0]
+    assert by_name["Uncategorized"].category_id is None
+    assert by_name["Uncategorized"].actuals == [0.0, 40.0]

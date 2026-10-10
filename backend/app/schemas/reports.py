@@ -202,6 +202,23 @@ class SpendingTrendsReport(BaseModel):
     monthly_net_totals: list[float]
 
 
+class CategoryMonthlySeries(BaseModel):
+    """One expense category's actual spend and budget per month."""
+    category_id: Optional[int]           # None = uncategorized
+    category_name: str
+    parent_category_name: Optional[str]
+    actuals: list[float]                 # one entry per month, budget-report sign convention
+    budgets: list[float]                 # 0 for months with no budget set
+
+
+class CategoryTrendsReport(BaseModel):
+    """Every expense category's monthly actuals and budgets, uncapped, so the
+    client can sum any selection of categories into a single trend line."""
+    months: list[str]
+    month_labels: list[str]
+    series: list[CategoryMonthlySeries]
+
+
 # ---------------------------------------------------------------------------
 # Spending averages — per-category trailing 1M/3M/6M/12M averages
 # ---------------------------------------------------------------------------

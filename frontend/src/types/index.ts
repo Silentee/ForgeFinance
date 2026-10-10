@@ -323,6 +323,20 @@ export interface SpendingTrendsReport {
   monthly_net_totals: number[]
 }
 
+export interface CategoryMonthlySeries {
+  category_id?: number | null
+  category_name: string
+  parent_category_name?: string | null
+  actuals: number[]
+  budgets: number[]
+}
+
+export interface CategoryTrendsReport {
+  months: string[]
+  month_labels: string[]
+  series: CategoryMonthlySeries[]
+}
+
 export interface MonthlyTotalsReport {
   months: string[]
   month_labels: string[]
