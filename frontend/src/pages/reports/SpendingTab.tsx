@@ -301,7 +301,7 @@ export default function SpendingTab() {
                         : null
                       return (
                         <tr className="border-b border-white/[0.08] bg-white/[0.03]">
-                          <td className="py-3 font-medium text-ink-100 sticky left-0 z-10 bg-surface-800" style={{ paddingLeft: catBasePad, paddingRight: catBasePad }}>Total Expenses</td>
+                          <td className="py-3 font-medium text-ink-100 sticky left-0 z-10 bg-surface-800 shadow-[inset_0_0_0_9999px_rgba(255,255,255,0.03)]" style={{ paddingLeft: catBasePad, paddingRight: catBasePad }}>Total Expenses</td>
                           <td className="px-4 py-3 text-right font-mono text-ink-100">{formatCurrencyWhole(budgetReport.total_expenses_actual)}</td>
                           <td className="px-4 py-3">
                             {budgetReport.total_expenses_budgeted > 0 ? (
@@ -366,7 +366,7 @@ export default function SpendingTab() {
                             return next
                           })}
                         >
-                          <td className="py-2.5 font-medium text-ink-100 sticky left-0 z-10 bg-surface-800 group-hover:bg-surface-700 transition-colors" style={{ paddingLeft: catBasePad, paddingRight: catBasePad }}>
+                          <td className="py-2.5 font-medium text-ink-100 sticky left-0 z-10 bg-surface-800 shadow-[inset_0_0_0_9999px_rgba(255,255,255,0.02)] group-hover:shadow-[inset_0_0_0_9999px_rgba(255,255,255,0.04)] transition-shadow" style={{ paddingLeft: catBasePad, paddingRight: catBasePad }}>
                             <span className="inline-block overflow-hidden text-ink-400 text-xs" style={{ width: catArrowWidth, marginRight: catArrowMargin }}>
                               {isGroupCollapsed(group.parent) ? '▸' : '▾'}
                             </span>
