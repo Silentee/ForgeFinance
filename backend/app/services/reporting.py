@@ -17,6 +17,8 @@ from app.schemas.reports import (
     BudgetLineItem,
     BudgetReport,
     CategoryMonthlySeries,
+    CategoryTransactionLine,
+    CategoryTransactionsReport,
     CategoryTrendSeries,
     CategoryTrendsReport,
     EquityDataPoint,
@@ -266,6 +268,65 @@ def build_budget_report(
         net_budgeted=round(total_income_budgeted - total_expenses_budgeted, 2),
         income_lines=income_lines,
         expense_lines=expense_lines,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Category transactions — drill-down behind a budget-report expense line
+# ---------------------------------------------------------------------------
+
+def build_category_transactions(
+    db: Session,
+    year: int,
+    month: int,
+    category_ids: list[int],
+    include_uncategorized: bool = False,
+    account_ids: Optional[list[int]] = None,
+) -> CategoryTransactionsReport:
+    """The transactions behind build_budget_report's expense actual for the
+    given categories and month. Uses the same two selectors, so the lines
+    always sum to the report's actual: in-month debits/credits (refunds count
+    negative) plus each annualized purchase's 1/12 share for this month."""
+    wanted = set(category_ids)
+
+    def matches(tx: Transaction) -> bool:
+        return tx.category_id in wanted if tx.category_id is not None else include_uncategorized
+
+    def line(tx: Transaction, contribution: float, annualized_month: Optional[int] = None) -> CategoryTransactionLine:
+        return CategoryTransactionLine(
+            transaction_id=tx.id,
+            date=tx.date.isoformat(),
+            description=tx.description or tx.original_description,
+            account_name=tx.account.name if tx.account else None,
+            category_name=tx.category.name if tx.category else None,
+            transaction_type=tx.transaction_type.value,
+            amount=round(float(tx.amount), 2),
+            contribution=round(contribution, 2),
+            is_annualized=tx.is_annualized,
+            annualized_month=annualized_month,
+        )
+
+    contributions: list[tuple[Transaction, float, Optional[int]]] = []
+    date_from = _first_day_of_month(year, month)
+    date_to = _last_day_of_month(year, month)
+    for tx in _get_budget_transactions(db, date_from, date_to, account_ids):
+        if matches(tx):
+            amount = float(tx.amount)
+            contributions.append((tx, amount if tx.transaction_type == TransactionType.DEBIT else -amount, None))
+
+    for tx, monthly_share in _get_annualized_contributions(db, year, month, account_ids):
+        if matches(tx):
+            spread_month = (year * 12 + month) - (tx.date.year * 12 + tx.date.month) + 1
+            contributions.append((tx, monthly_share, spread_month))
+
+    contributions.sort(key=lambda c: (-c[1], c[0].date, c[0].id))
+
+    return CategoryTransactionsReport(
+        year=year,
+        month=month,
+        month_label=_month_label(year, month),
+        total=round(sum(c[1] for c in contributions), 2),
+        lines=[line(tx, amount, spread_month) for tx, amount, spread_month in contributions],
     )
 
 

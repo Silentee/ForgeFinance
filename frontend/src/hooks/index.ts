@@ -31,6 +31,7 @@ export const QK = {
   budgets:       (params?: object) => ['budgets', params] as const,
   budgetVisibleCategories: (year: number, month: number) => ['budgets', 'visible-categories', year, month] as const,
   reportBudget:  (year: number, month: number) => ['reports', 'budget', year, month] as const,
+  reportCategoryTransactions: (year: number, month: number, params: object) => ['reports', 'category-transactions', year, month, params] as const,
   reportNetWorth:(months?: number) => ['reports', 'net-worth', months] as const,
   reportTrends:  (params?: object) => ['reports', 'trends', params] as const,
   reportSpendingAverages: (year: number, month: number) => ['reports', 'spending-averages', year, month] as const,
@@ -417,6 +418,14 @@ export function useBudgetReport(year: number, month: number) {
   return useQuery({
     queryKey: QK.reportBudget(year, month),
     queryFn: () => reportsApi.budget(year, month),
+    enabled: !!year && !!month,
+  })
+}
+
+export function useCategoryTransactions(year: number, month: number, params: { categoryIds: number[]; includeUncategorized: boolean }) {
+  return useQuery({
+    queryKey: QK.reportCategoryTransactions(year, month, params),
+    queryFn: () => reportsApi.categoryTransactions(year, month, params),
     enabled: !!year && !!month,
   })
 }

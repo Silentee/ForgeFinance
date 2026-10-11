@@ -148,6 +148,34 @@ class BudgetReport(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Category transactions — the transactions behind one budget-report actual
+# ---------------------------------------------------------------------------
+
+class CategoryTransactionLine(BaseModel):
+    """One transaction's contribution to a category's monthly actual."""
+    transaction_id: int
+    date: str                       # ISO date of the transaction itself
+    description: str
+    account_name: Optional[str]
+    category_name: Optional[str]    # None = uncategorized
+    transaction_type: str           # "debit" | "credit"
+    amount: float                   # full transaction amount (always positive)
+    contribution: float             # signed amount counted this month (refunds negative)
+    is_annualized: bool
+    annualized_month: Optional[int]  # 1..12 — which month of the spread this is
+
+
+class CategoryTransactionsReport(BaseModel):
+    """Every transaction counted toward the selected categories' actual for
+    one month, highest contribution first. total matches the budget report."""
+    year: int
+    month: int
+    month_label: str
+    total: float
+    lines: list[CategoryTransactionLine]
+
+
+# ---------------------------------------------------------------------------
 # Net worth history — monthly snapshots for the trend chart
 # ---------------------------------------------------------------------------
 

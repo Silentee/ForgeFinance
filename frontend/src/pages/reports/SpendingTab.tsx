@@ -7,6 +7,26 @@ import type { SpendingAverageLine } from '@/types'
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer } from 'recharts'
 import clsx from 'clsx'
 import { CHART_COLORS } from './shared'
+import CategoryTransactionsModal, { type CategoryDrilldown } from './CategoryTransactionsModal'
+
+// Box-and-arrow button that opens a row's transactions. Stops propagation so
+// clicking it on a parent row doesn't also toggle that group.
+function DrilldownButton({ onClick }: { onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={e => { e.stopPropagation(); onClick() }}
+      className="inline-flex align-middle ml-1.5 p-0.5 -my-0.5 rounded text-ink-500 hover:text-amber-300 hover:bg-white/[0.06] transition-colors"
+      aria-label="View transactions"
+      title="View transactions"
+    >
+      <svg viewBox="0 0 20 20" fill="currentColor" className="w-3.5 h-3.5">
+        <path fillRule="evenodd" d="M4.25 5.5a.75.75 0 00-.75.75v8.5c0 .414.336.75.75.75h8.5a.75.75 0 00.75-.75v-4a.75.75 0 011.5 0v4A2.25 2.25 0 0112.75 17h-8.5A2.25 2.25 0 012 14.75v-8.5A2.25 2.25 0 014.25 4h5a.75.75 0 010 1.5h-5z" clipRule="evenodd" />
+        <path fillRule="evenodd" d="M6.194 12.753a.75.75 0 001.06.053L16.5 4.44v2.81a.75.75 0 001.5 0v-4.5a.75.75 0 00-.75-.75h-4.5a.75.75 0 000 1.5h2.553l-9.056 8.194a.75.75 0 00-.053 1.06z" clipRule="evenodd" />
+      </svg>
+    </button>
+  )
+}
 
 // Budget progress bar with a marker showing where the budget line falls relative to spending.
 // Under budget: fill shows how far spent, marker pinned to the far right (budget = 100%).
@@ -44,6 +64,7 @@ export default function SpendingTab() {
   const isGroupCollapsed = (name: string) => collapsedGroups === 'all' || collapsedGroups.has(name)
   const [showDiff, setShowDiff] = useState(false)
   const [showAllCategories, setShowAllCategories] = useState(false)
+  const [drilldown, setDrilldown] = useState<CategoryDrilldown | null>(null)
 
   // Note when the current (incomplete) month is selected — used for the on-screen note below.
   const isCurrentMonth = spendingYear === now.year && spendingMonth === now.month
@@ -76,7 +97,7 @@ export default function SpendingTab() {
   // Merge budget lines with trend averages, grouped by parent
   const spendingRows = (() => {
     if (!budgetReport) return []
-    const groups = new Map<string, { actual: number; budgeted: number; avg3: number; avg6: number; avg12: number; children: { name: string; actual: number; budgeted: number; pctUsed: number | null; avg3: number; avg6: number; avg12: number }[] }>()
+    const groups = new Map<string, { actual: number; budgeted: number; avg3: number; avg6: number; avg12: number; children: { name: string; categoryId: number | null; actual: number; budgeted: number; pctUsed: number | null; avg3: number; avg6: number; avg12: number }[] }>()
     for (const line of budgetReport.expense_lines) {
       const parent = line.parent_category_name ?? 'Other'
       if (!groups.has(parent)) groups.set(parent, { actual: 0, budgeted: 0, avg3: 0, avg6: 0, avg12: 0, children: [] })
@@ -90,6 +111,7 @@ export default function SpendingTab() {
       g.avg12 += avgs.avg12
       g.children.push({
         name: line.category_name,
+        categoryId: line.category_id ?? null,
         actual: line.actual,
         budgeted: line.budgeted,
         pctUsed: line.percent_used ?? null,
@@ -374,6 +396,17 @@ export default function SpendingTab() {
                               <span className="inline-block w-2 h-2 rounded-full mr-1.5 align-middle" style={{ backgroundColor: pieColorMap.get(group.parent) }} />
                             )}
                             {group.parent}
+                            {/* Hidden while expanded, like the rest of the row — each child has its own */}
+                            {!groupExpanded && (
+                              <DrilldownButton
+                                onClick={() => setDrilldown({
+                                  title: group.parent,
+                                  // Every child, including ones the "All" toggle hides, so the list sums to group.actual
+                                  categoryIds: group.children.flatMap(c => (c.categoryId != null ? [c.categoryId] : [])),
+                                  includeUncategorized: group.children.some(c => c.categoryId == null),
+                                })}
+                              />
+                            )}
                           </td>
                           <td className="px-4 py-2.5 text-right font-mono text-ink-100">{groupExpanded ? null : formatCurrencyWhole(group.actual)}</td>
                           <td className="px-4 py-2.5">
@@ -408,6 +441,13 @@ export default function SpendingTab() {
                                 <span className="inline-block w-2 h-2 rounded-full mr-1.5 align-middle" style={{ backgroundColor: pieColorMap.get(child.name) }} />
                               )}
                               {child.name}
+                              <DrilldownButton
+                                onClick={() => setDrilldown({
+                                  title: child.name,
+                                  categoryIds: child.categoryId != null ? [child.categoryId] : [],
+                                  includeUncategorized: child.categoryId == null,
+                                })}
+                              />
                             </td>
                             <td className="px-4 py-2 text-right font-mono text-ink-200">{formatCurrencyWhole(child.actual)}</td>
                             <td className="px-4 py-2">
@@ -443,6 +483,15 @@ export default function SpendingTab() {
             </div>
           </Card>
         </>
+      )}
+
+      {drilldown && (
+        <CategoryTransactionsModal
+          year={spendingYear}
+          month={spendingMonth}
+          drilldown={drilldown}
+          onClose={() => setDrilldown(null)}
+        />
       )}
     </div>
   )

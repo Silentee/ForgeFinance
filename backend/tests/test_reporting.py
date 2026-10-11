@@ -4,6 +4,7 @@ from app.models import Account, Budget, Category, Transaction
 from app.models.enums import TransactionType
 from app.services.reporting import (
     build_budget_report,
+    build_category_transactions,
     build_category_trends,
     build_monthly_totals,
     build_spending_averages,
@@ -169,3 +170,75 @@ def test_category_trends_budget_only_and_annualized(db):
     assert by_name["Dining"].budgets == [0.0, 80.0]
     assert by_name["Uncategorized"].category_id is None
     assert by_name["Uncategorized"].actuals == [0.0, 40.0]
+
+
+def test_category_transactions_match_budget_actual(db):
+    acct, salary, groceries = _setup(db)
+    dining = Category(name="Dining", is_income=False, parent_id=groceries.parent_id)
+    db.add(dining)
+    db.flush()
+    june = date(2026, 6, 15)
+    big = _tx(db, acct, groceries, 200.0, TransactionType.DEBIT, june)
+    small = _tx(db, acct, groceries, 30.0, TransactionType.DEBIT, date(2026, 6, 2))
+    refund = _tx(db, acct, groceries, 50.0, TransactionType.CREDIT, june)
+    # None of these count toward Groceries' June actual
+    _tx(db, acct, groceries, 500.0, TransactionType.DEBIT, june, is_transfer=True)
+    _tx(db, acct, groceries, 75.0, TransactionType.DEBIT, june, exclude_from_budget=True)
+    _tx(db, acct, groceries, 60.0, TransactionType.DEBIT, date(2026, 5, 31))
+    _tx(db, acct, dining, 25.0, TransactionType.DEBIT, june)
+    _tx(db, acct, salary, 1000.0, TransactionType.CREDIT, june)
+    db.commit()
+
+    report = build_category_transactions(db, 2026, 6, [groceries.id])
+    budget = build_budget_report(db, 2026, 6)
+    groceries_line = next(l for l in budget.expense_lines if l.category_name == "Groceries")
+
+    # Highest contribution first; the refund counts negative and sorts last
+    assert [l.transaction_id for l in report.lines] == [big.id, small.id, refund.id]
+    assert [l.contribution for l in report.lines] == [200.0, 30.0, -50.0]
+    assert report.total == groceries_line.actual == 180.0
+    assert report.month_label == "June 2026"
+
+    # A whole group is just several ids at once
+    group = build_category_transactions(db, 2026, 6, [groceries.id, dining.id])
+    assert group.total == 205.0
+    assert len(group.lines) == 4
+
+
+def test_category_transactions_include_annualized_share(db):
+    acct, _salary, groceries = _setup(db)
+    annual = _tx(db, acct, groceries, 1200.0, TransactionType.DEBIT, date(2026, 1, 15), is_annualized=True)
+    # 13 months before June — its spread ended in May
+    _tx(db, acct, groceries, 2400.0, TransactionType.DEBIT, date(2025, 5, 10), is_annualized=True)
+    _tx(db, acct, groceries, 40.0, TransactionType.DEBIT, date(2026, 6, 3))
+    db.commit()
+
+    report = build_category_transactions(db, 2026, 6, [groceries.id])
+
+    assert [l.contribution for l in report.lines] == [100.0, 40.0]
+    annual_line = report.lines[0]
+    assert annual_line.transaction_id == annual.id
+    assert annual_line.is_annualized
+    assert annual_line.amount == 1200.0
+    assert annual_line.annualized_month == 6
+    assert annual_line.date == "2026-01-15"
+    assert report.lines[1].annualized_month is None
+
+    budget = build_budget_report(db, 2026, 6)
+    groceries_line = next(l for l in budget.expense_lines if l.category_name == "Groceries")
+    assert report.total == groceries_line.actual == 140.0
+
+
+def test_category_transactions_uncategorized(db):
+    acct, _salary, groceries = _setup(db)
+    uncat = _tx(db, acct, None, 40.0, TransactionType.DEBIT, date(2026, 6, 10))
+    _tx(db, acct, groceries, 90.0, TransactionType.DEBIT, date(2026, 6, 11))
+    db.commit()
+
+    report = build_category_transactions(db, 2026, 6, [], include_uncategorized=True)
+    assert [l.transaction_id for l in report.lines] == [uncat.id]
+    assert report.lines[0].category_name is None
+    assert report.total == 40.0
+
+    # Uncategorized rows are left out unless asked for
+    assert build_category_transactions(db, 2026, 6, [groceries.id]).total == 90.0

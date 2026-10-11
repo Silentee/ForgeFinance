@@ -16,6 +16,7 @@ from app.db.session import get_db
 from app.models.user import User
 from app.schemas.reports import (
     BudgetReport,
+    CategoryTransactionsReport,
     CategoryTrendsReport,
     EquityHistoryReport,
     MonthlyTotalsReport,
@@ -26,6 +27,7 @@ from app.schemas.reports import (
 from app.schemas.subscriptions import SubscriptionsReport
 from app.services.reporting import (
     build_budget_report,
+    build_category_transactions,
     build_category_trends,
     build_equity_history,
     build_monthly_totals,
@@ -64,6 +66,29 @@ def get_budget_report(
     _validate_year_month(year, month)
     account_id_list = _parse_account_ids(account_ids)
     return build_budget_report(db, year, month, account_id_list)
+
+
+@router.get("/category-transactions/{year}/{month}", response_model=CategoryTransactionsReport)
+def get_category_transactions(
+    year: int,
+    month: int,
+    category_ids: Optional[str] = Query(None, description="Comma-separated category IDs"),
+    uncategorized: bool = Query(False, description="Include uncategorized transactions"),
+    account_ids: Optional[str] = Query(None, description="Comma-separated account IDs"),
+    db: Session = Depends(get_db),
+):
+    """
+    The transactions behind the budget report's expense actual for the given
+    categories in one month, highest contribution first.
+
+    Uses the same selection as the budget report, so the lines sum to its
+    actual: in-month debits and refunds (negative), plus the 1/12 monthly
+    share of any annualized purchase from the trailing 12 months.
+    """
+    _validate_year_month(year, month)
+    category_id_list = _parse_int_list(category_ids, "category_ids") or []
+    account_id_list = _parse_account_ids(account_ids)
+    return build_category_transactions(db, year, month, category_id_list, uncategorized, account_id_list)
 
 
 @router.get("/net-worth/history", response_model=NetWorthHistory)
@@ -228,14 +253,19 @@ def _validate_year_month(year: int, month: int):
         raise HTTPException(status_code=422, detail="month must be between 1 and 12")
 
 
-def _parse_account_ids(account_ids_str: Optional[str]) -> Optional[list[int]]:
-    """Parse a comma-separated string of account IDs into a list of ints."""
-    if not account_ids_str:
+def _parse_int_list(value: Optional[str], param_name: str) -> Optional[list[int]]:
+    """Parse a comma-separated string of IDs into a list of ints."""
+    if not value:
         return None
     try:
-        return [int(x.strip()) for x in account_ids_str.split(",") if x.strip()]
+        return [int(x.strip()) for x in value.split(",") if x.strip()]
     except ValueError:
         raise HTTPException(
             status_code=422,
-            detail="account_ids must be a comma-separated list of integers, e.g. '1,2,3'",
+            detail=f"{param_name} must be a comma-separated list of integers, e.g. '1,2,3'",
         )
+
+
+def _parse_account_ids(account_ids_str: Optional[str]) -> Optional[list[int]]:
+    """Parse a comma-separated string of account IDs into a list of ints."""
+    return _parse_int_list(account_ids_str, "account_ids")

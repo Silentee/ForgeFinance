@@ -288,6 +288,27 @@ export interface BudgetReport {
   expense_lines: BudgetLineItem[]
 }
 
+export interface CategoryTransactionLine {
+  transaction_id: number
+  date: string
+  description: string
+  account_name?: string
+  category_name?: string            // undefined = uncategorized
+  transaction_type: TransactionType
+  amount: number                    // full transaction amount
+  contribution: number              // signed amount counted this month (refunds negative)
+  is_annualized: boolean
+  annualized_month?: number         // 1..12 — which month of the spread this is
+}
+
+export interface CategoryTransactionsReport {
+  year: number
+  month: number
+  month_label: string
+  total: number
+  lines: CategoryTransactionLine[]
+}
+
 export interface NetWorthDataPoint {
   date: string
   total_assets: number
