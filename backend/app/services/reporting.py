@@ -297,6 +297,7 @@ def build_category_transactions(
             transaction_id=tx.id,
             date=tx.date.isoformat(),
             description=tx.description or tx.original_description,
+            notes=tx.notes or None,
             account_name=tx.account.name if tx.account else None,
             category_name=tx.category.name if tx.category else None,
             transaction_type=tx.transaction_type.value,

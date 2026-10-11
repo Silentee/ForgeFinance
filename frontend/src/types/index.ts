@@ -292,6 +292,7 @@ export interface CategoryTransactionLine {
   transaction_id: number
   date: string
   description: string
+  notes?: string
   account_name?: string
   category_name?: string            // undefined = uncategorized
   transaction_type: TransactionType

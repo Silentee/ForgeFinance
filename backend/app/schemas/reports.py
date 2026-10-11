@@ -156,6 +156,7 @@ class CategoryTransactionLine(BaseModel):
     transaction_id: int
     date: str                       # ISO date of the transaction itself
     description: str
+    notes: Optional[str]
     account_name: Optional[str]
     category_name: Optional[str]    # None = uncategorized
     transaction_type: str           # "debit" | "credit"

@@ -178,7 +178,7 @@ def test_category_transactions_match_budget_actual(db):
     db.add(dining)
     db.flush()
     june = date(2026, 6, 15)
-    big = _tx(db, acct, groceries, 200.0, TransactionType.DEBIT, june)
+    big = _tx(db, acct, groceries, 200.0, TransactionType.DEBIT, june, notes="party supplies")
     small = _tx(db, acct, groceries, 30.0, TransactionType.DEBIT, date(2026, 6, 2))
     refund = _tx(db, acct, groceries, 50.0, TransactionType.CREDIT, june)
     # None of these count toward Groceries' June actual
@@ -196,6 +196,7 @@ def test_category_transactions_match_budget_actual(db):
     # Highest contribution first; the refund counts negative and sorts last
     assert [l.transaction_id for l in report.lines] == [big.id, small.id, refund.id]
     assert [l.contribution for l in report.lines] == [200.0, 30.0, -50.0]
+    assert [l.notes for l in report.lines] == ["party supplies", None, None]
     assert report.total == groceries_line.actual == 180.0
     assert report.month_label == "June 2026"
 

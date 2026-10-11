@@ -51,6 +51,9 @@ export default function CategoryTransactionsModal({ year, month, drilldown, onCl
                 </span>
                 <div className="flex-1 min-w-0">
                   <div className="text-sm text-ink-100 truncate" title={line.description}>{line.description}</div>
+                  {line.notes && (
+                    <div className="text-xs text-ink-300 mt-0.5 whitespace-pre-line break-words">{line.notes}</div>
+                  )}
                   <div className="flex flex-wrap items-center gap-1.5 mt-0.5 text-2xs text-ink-300">
                     <span className="sm:hidden font-mono">{formatDate(line.date)}</span>
                     {line.account_name && <span>{line.account_name}</span>}
