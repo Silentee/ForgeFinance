@@ -25,8 +25,9 @@ export default function CategoryTransactionsModal({ year, month, drilldown, onCl
   // A parent group spans several categories, so each line names its own.
   const multiCategory = drilldown.categoryIds.length + (drilldown.includeUncategorized ? 1 : 0) > 1
 
+  // `!` so the width beats Modal's base max-w-md, which Tailwind emits later in the stylesheet.
   return (
-    <Modal onClose={onClose} className="max-w-4xl">
+    <Modal onClose={onClose} className="!max-w-4xl">
       <h2 className="text-base font-semibold text-ink-100 mb-1 pr-6">{drilldown.title}</h2>
       <p className="text-sm text-ink-300 mb-4">
         {data
