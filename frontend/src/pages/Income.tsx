@@ -11,7 +11,7 @@ import {
 } from '@/hooks'
 import { Button, Card, CheckboxRow, EmptyState, FilterDropdown, Modal, PageHeader, Spinner } from '@/components/ui'
 import { currentYearMonth, formatCurrencyCompact, formatCurrencyWhole, formatDate, formatPercent, todayLocal } from '@/lib/format'
-import { addMonths, type YearMonth } from './reports/shared'
+import { addMonths, niceTicks, type YearMonth } from './reports/shared'
 import type { Earner, IncomeBonusYear, IncomeEarnerSeries, IncomeEntry, IncomeKind, IncomeReport } from '@/types'
 
 // Categorical steps validated together with the take-home amber
@@ -350,7 +350,8 @@ export default function IncomePage() {
   const [personFilter, setPersonFilter] = useState<number | null>(null)
   const [editing, setEditing] = useState<IncomeEntry | 'new' | null>(null)
   const [showPeople, setShowPeople] = useState(false)
-  const [salaryView, setSalaryView] = useState<'base' | 'total'>('base')
+  const [salaryView, setSalaryView] = useState<'base' | 'total'>('total')
+  const [showSalaryIndividuals, setShowSalaryIndividuals] = useState(false)
 
   const { data: earners, isLoading: earnersLoading } = useEarners()
   const { data: entries } = useIncomeEntries()
@@ -494,6 +495,21 @@ export default function IncomePage() {
   const salaryData = firstSalaryIdx === -1 ? [] : salaryRowsAll.slice(firstSalaryIdx)
   const salaryEarners = seriesEarners.filter(e => e.monthly_salary_rate.some(r => r != null))
   const showHouseholdSalary = salaryEarners.length > 1
+  // With a household line, per-person lines are opt-in.
+  const salaryLineEarners = showHouseholdSalary && !showSalaryIndividuals ? [] : salaryEarners
+  // Fit the y-axis to the lines on screen instead of anchoring at 0, so raises stay visible.
+  const salaryYAxis: { domain: ['auto', 'auto'] | [number, number]; ticks: number[] | undefined } = (() => {
+    const keys = [
+      ...salaryLineEarners.map(e => earnerKey(e.earner_id)),
+      ...(showHouseholdSalary ? ['household'] : []),
+    ]
+    const vals = salaryData.flatMap(row => keys.map(k => row[k])).filter((v): v is number => typeof v === 'number')
+    if (!vals.length) return { domain: ['auto', 'auto'], ticks: undefined }
+    const min = Math.min(...vals)
+    const max = Math.max(...vals)
+    const pad = (max - min) * 0.1 || Math.abs(max) * 0.1 || 1
+    return niceTicks(Math.max(0, min - pad), max + pad)
+  })()
   // January rows mark the start of each year on the salary chart. With at
   // least two, the x-axis ticks move onto those lines and show just the year.
   const salaryYearStarts = report
@@ -707,7 +723,7 @@ export default function IncomePage() {
                 <div className="overflow-x-auto">
                   <table className="w-full text-sm">
                     <thead>
-                      <tr className="text-left text-2xs uppercase tracking-wider text-ink-400 border-b border-white/[0.06]">
+                      <tr className="text-left text-2xs uppercase tracking-wider text-ink-300 border-b border-white/[0.06]">
                         <th className="py-2 pr-3 font-medium">Year</th>
                         {seriesEarners.length > 1 && seriesEarners.map(e => (
                           <th key={e.earner_id} className="py-2 pr-3 font-medium text-right whitespace-nowrap">{e.name}</th>
@@ -815,7 +831,7 @@ export default function IncomePage() {
               <div className="overflow-x-auto">
                 <table className="w-full text-sm">
                   <thead>
-                    <tr className="text-left text-2xs uppercase tracking-wider text-ink-400 border-b border-white/[0.06]">
+                    <tr className="text-left text-2xs uppercase tracking-wider text-ink-300 border-b border-white/[0.06]">
                       <th className="py-2 pr-3 font-medium whitespace-nowrap">Performance year</th>
                       {bonusEarners.length > 1 && <th className="py-2 pr-3 font-medium">Person</th>}
                       <th className="py-2 pr-3 font-medium text-right whitespace-nowrap">Year-end base</th>
@@ -833,7 +849,7 @@ export default function IncomePage() {
                             {i === 0 && (
                               <>
                                 {g.year}
-                                {g.inProgress && <span className="text-ink-400 text-xs"> · in progress</span>}
+                                {g.inProgress && <span className="text-ink-300 text-xs"> · in progress</span>}
                               </>
                             )}
                           </td>
@@ -898,13 +914,26 @@ export default function IncomePage() {
               <h4 className="label text-ink-200">
                 {showTotalComp ? 'Target Total Comp (Base + Target Bonus)' : 'Salary History (Annual Base)'}
               </h4>
-              {hasTargets && (
-                <SegmentedControl<'base' | 'total'>
-                  options={[{ value: 'base', label: 'Base' }, { value: 'total', label: 'Base + target bonus' }]}
-                  value={salaryView}
-                  onChange={setSalaryView}
-                />
-              )}
+              <div className="flex flex-wrap items-center gap-3">
+                {showHouseholdSalary && (
+                  <label className="flex items-center gap-1.5 text-xs text-ink-300 cursor-pointer whitespace-nowrap">
+                    <input
+                      type="checkbox"
+                      checked={showSalaryIndividuals}
+                      onChange={e => setShowSalaryIndividuals(e.target.checked)}
+                      className="accent-amber-400"
+                    />
+                    Show individuals
+                  </label>
+                )}
+                {hasTargets && (
+                  <SegmentedControl<'base' | 'total'>
+                    options={[{ value: 'base', label: 'Base' }, { value: 'total', label: 'Base + target bonus' }]}
+                    value={salaryView}
+                    onChange={setSalaryView}
+                  />
+                )}
+              </div>
             </div>
             <div className={clsx('space-y-4 transition-opacity', isFetching && 'opacity-60')}>
               <div style={{ height: 280 }}>
@@ -924,14 +953,21 @@ export default function IncomePage() {
                       ticks={salaryYearTicks ? salaryYearStarts : undefined}
                       tickFormatter={salaryYearTicks ? (v: string) => v.slice(-4) : undefined}
                     />
-                    <YAxis tick={AXIS_TICK} axisLine={false} tickLine={false} tickFormatter={(v: number) => formatCurrencyCompact(v)} />
+                    <YAxis
+                      tick={AXIS_TICK}
+                      axisLine={false}
+                      tickLine={false}
+                      tickFormatter={(v: number) => formatCurrencyCompact(v)}
+                      domain={salaryYAxis.domain}
+                      ticks={salaryYAxis.ticks}
+                    />
                     <Tooltip
                       contentStyle={TOOLTIP_STYLE}
                       labelStyle={{ color: '#e8e6e3', marginBottom: 4 }}
                       itemStyle={{ color: '#c8c3bb' }}
                       formatter={(value: number, name: string) => [value == null ? '—' : `${formatCurrencyWhole(value)}/yr`, name]}
                     />
-                    {salaryEarners.map(e => (
+                    {salaryLineEarners.map(e => (
                       <Line
                         key={e.earner_id}
                         dataKey={earnerKey(e.earner_id)}
@@ -962,7 +998,7 @@ export default function IncomePage() {
               </div>
               <ChartLegend
                 items={[
-                  ...salaryEarners.map(e => ({ label: e.name, color: colors.get(e.earner_id) ?? OVERFLOW_COLOR, kind: 'line' as const })),
+                  ...salaryLineEarners.map(e => ({ label: e.name, color: colors.get(e.earner_id) ?? OVERFLOW_COLOR, kind: 'line' as const })),
                   ...(showHouseholdSalary ? [{ label: 'Household', color: HOUSEHOLD_COLOR, kind: 'line' as const }] : []),
                 ]}
               />
@@ -1002,7 +1038,7 @@ export default function IncomePage() {
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
-                  <tr className="text-left text-2xs uppercase tracking-wider text-ink-400 border-b border-white/[0.06]">
+                  <tr className="text-left text-2xs uppercase tracking-wider text-ink-300 border-b border-white/[0.06]">
                     <th className="py-2 pr-3 font-medium whitespace-nowrap">Date</th>
                     <th className="py-2 pr-3 font-medium">Person</th>
                     <th className="py-2 pr-3 font-medium">Type</th>
@@ -1031,14 +1067,14 @@ export default function IncomePage() {
                         <td className="py-2.5 pr-3 text-ink-200 whitespace-nowrap">
                           {KIND_LABELS[entry.kind]}
                           {entry.kind === 'bonus' && entry.bonus_year != null && (
-                            <span className="text-ink-400"> · {entry.bonus_year}</span>
+                            <span className="text-ink-300"> · {entry.bonus_year}</span>
                           )}
                         </td>
                         <td className="py-2.5 pr-3 text-right font-mono tabular-nums text-ink-100 whitespace-nowrap">
                           {formatCurrencyWhole(entry.amount)}
-                          {entry.kind === 'salary' && <span className="text-ink-400">/yr</span>}
+                          {entry.kind === 'salary' && <span className="text-ink-300">/yr</span>}
                           {entry.kind === 'salary' && (entry.target_bonus_pct ?? 0) > 0 && (
-                            <span className="text-ink-400"> · {pctLabel(entry.target_bonus_pct ?? 0)} bonus</span>
+                            <span className="text-ink-300"> · {pctLabel(entry.target_bonus_pct ?? 0)} bonus</span>
                           )}
                         </td>
                         <td className={clsx(
