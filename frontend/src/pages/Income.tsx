@@ -35,6 +35,7 @@ const INPUT_CLASS =
 const KIND_LABELS: Record<IncomeKind, string> = {
   salary: 'Salary change',
   bonus: 'Bonus',
+  award: 'Award',
   other: 'Other one-time',
 }
 

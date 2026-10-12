@@ -9,7 +9,7 @@ from typing import Literal, Optional
 
 from pydantic import BaseModel, Field, field_validator
 
-IncomeKind = Literal["salary", "bonus", "other"]
+IncomeKind = Literal["salary", "bonus", "award", "other"]
 
 
 def _clean_name(v: str) -> str:
@@ -63,7 +63,7 @@ class IncomeEntryCreate(BaseModel):
     earner_id: int
     kind: IncomeKind
     effective_date: date
-    # salary: annual gross rate; bonus/other: one-time gross amount
+    # salary: annual gross rate; bonus/award/other: one-time gross amount
     amount: float = Field(ge=0)
     employer: Optional[str] = Field(None, max_length=255)
     notes: Optional[str] = None
@@ -102,7 +102,7 @@ class IncomeEarnerSeries(BaseModel):
     monthly_salary_rate: list[Optional[float]]
     # Prorated salary plus one-time items paid that month.
     monthly_gross: list[float]
-    # The one-time (bonus/other) part of monthly_gross.
+    # The one-time (bonus/award/other) part of monthly_gross.
     monthly_one_time: list[float]
     current_salary: float   # annual rate in effect today
 

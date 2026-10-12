@@ -51,7 +51,7 @@ class IncomeEntry(Base):
     effective_date until the earner's next salary entry (a step function, like
     balance snapshots). An amount of 0 means income stopped (left a job, leave).
 
-    kind='bonus' | 'other': a one-time gross amount paid on effective_date.
+    kind='bonus' | 'award' | 'other': a one-time gross amount paid on effective_date.
     """
     __tablename__ = "income_entries"
 
@@ -66,7 +66,7 @@ class IncomeEntry(Base):
         ForeignKey("earners.id", ondelete="CASCADE"), nullable=False, index=True
     )
 
-    kind: Mapped[str] = mapped_column(String(20), nullable=False)  # 'salary' | 'bonus' | 'other'
+    kind: Mapped[str] = mapped_column(String(20), nullable=False)  # 'salary' | 'bonus' | 'award' | 'other'
     effective_date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
     amount: Mapped[float] = mapped_column(Numeric(14, 2), nullable=False)
     employer: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)

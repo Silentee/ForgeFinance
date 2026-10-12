@@ -283,8 +283,8 @@ export interface EarnerUpdate {
 }
 
 // salary: annual gross rate in effect from effective_date until the next
-// salary entry; bonus/other: one-time gross amount paid on effective_date.
-export type IncomeKind = 'salary' | 'bonus' | 'other'
+// salary entry; bonus/award/other: one-time gross amount paid on effective_date.
+export type IncomeKind = 'salary' | 'bonus' | 'award' | 'other'
 
 export interface IncomeEntry {
   id: number

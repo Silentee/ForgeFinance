@@ -62,16 +62,19 @@ def test_zero_salary_ends_income(db):
     assert series.monthly_salary_rate[3] == 0.0
 
 
-def test_bonus_counts_in_its_month_only_and_not_in_salary_rate(db):
+def test_one_time_income_counts_in_its_month_only_and_not_in_salary_rate(db):
     me = _earner(db)
     _entry(db, me, "salary", date(2024, 1, 1), 120000)
     _entry(db, me, "bonus", date(2024, 3, 20), 7500)
+    _entry(db, me, "award", date(2024, 3, 25), 1000)
+    _entry(db, me, "award", date(2024, 9, 5), 2500)
     db.commit()
 
     series = _year_report(db, 2024).earners[0]
-    assert series.monthly_gross[2] == 17500.0
-    assert series.monthly_one_time[2] == 7500.0
+    assert series.monthly_gross[2] == 18500.0
+    assert series.monthly_one_time[2] == 8500.0
     assert series.monthly_gross[3] == 10000.0
+    assert series.monthly_one_time[8] == 2500.0
     assert set(series.monthly_salary_rate) == {120000.0}
 
 
