@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, type FormEvent } from 'react'
-import { NavLink, useLocation } from 'react-router-dom'
+import { NavLink } from 'react-router-dom'
 import clsx from 'clsx'
 import { useDemoStatus, useClearDemo, useStartDemo, useCurrentUser, useChangePassword, useAppMeta } from '@/hooks'
 import { exportApi } from '@/lib/services'
@@ -61,33 +61,66 @@ const NAV_ITEMS: NavItem[] = [
       </svg>
     ),
   },
+  {
+    to: '/import',
+    label: 'Import',
+    icon: (
+      <svg viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4">
+        <path fillRule="evenodd" d="M3 17a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zM6.293 6.707a1 1 0 010-1.414l3-3a1 1 0 011.414 0l3 3a1 1 0 01-1.414 1.414L11 5.414V13a1 1 0 11-2 0V5.414L7.707 6.707a1 1 0 01-1.414 0z" clipRule="evenodd"/>
+      </svg>
+    ),
+  },
 ]
 
-const REPORT_SUB_ITEMS = [
-  { to: '/reports/net-worth', label: 'Net Worth & Equity' },
-  { to: '/reports/cash-flow', label: 'Cash Flow' },
-  { to: '/reports/spending', label: 'Spending' },
-  { to: '/reports/emergency-fund', label: 'Emergency Fund' },
+const REPORT_ITEMS: NavItem[] = [
+  {
+    to: '/reports/net-worth',
+    label: 'Net Worth & Equity',
+    icon: (
+      <svg viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4">
+        <path fillRule="evenodd" d="M5 3a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2V5a2 2 0 00-2-2H5zm9 4a1 1 0 10-2 0v6a1 1 0 102 0V7zm-3 2a1 1 0 10-2 0v4a1 1 0 102 0V9zm-3 3a1 1 0 10-2 0v1a1 1 0 102 0v-1z" clipRule="evenodd"/>
+      </svg>
+    ),
+  },
+  {
+    to: '/reports/cash-flow',
+    label: 'Cash Flow',
+    icon: (
+      <svg viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4">
+        <path d="M8 5a1 1 0 100 2h5.586l-1.293 1.293a1 1 0 001.414 1.414l3-3a1 1 0 000-1.414l-3-3a1 1 0 10-1.414 1.414L13.586 5H8zM12 15a1 1 0 100-2H6.414l1.293-1.293a1 1 0 10-1.414-1.414l-3 3a1 1 0 000 1.414l3 3a1 1 0 001.414-1.414L6.414 15H12z"/>
+      </svg>
+    ),
+  },
+  {
+    to: '/reports/spending',
+    label: 'Spending',
+    icon: (
+      <svg viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4">
+        <path d="M2 10a8 8 0 018-8v8h8a8 8 0 11-16 0z"/>
+        <path d="M12 2.252A8.014 8.014 0 0117.748 8H12V2.252z"/>
+      </svg>
+    ),
+  },
+  {
+    to: '/reports/emergency-fund',
+    label: 'Emergency Fund',
+    icon: (
+      <svg viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4">
+        <path fillRule="evenodd" d="M2.166 4.999A11.954 11.954 0 0010 1.944 11.954 11.954 0 0017.834 5c.11.65.166 1.32.166 2.001 0 5.225-3.34 9.67-8 11.317C5.34 16.67 2 12.225 2 7c0-.682.057-1.35.166-2.001zm11.541 3.708a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd"/>
+      </svg>
+    ),
+  },
 ]
 
-const REPORTS_ICON = (
-  <svg viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4">
-    <path fillRule="evenodd" d="M5 3a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2V5a2 2 0 00-2-2H5zm9 4a1 1 0 10-2 0v6a1 1 0 102 0V7zm-3 2a1 1 0 10-2 0v4a1 1 0 102 0V9zm-3 3a1 1 0 10-2 0v1a1 1 0 102 0v-1z" clipRule="evenodd"/>
-  </svg>
-)
-
-const IMPORT_ITEM: NavItem = {
-  to: '/import',
-  label: 'Import',
-  icon: (
-    <svg viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4">
-      <path fillRule="evenodd" d="M3 17a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zM6.293 6.707a1 1 0 010-1.414l3-3a1 1 0 011.414 0l3 3a1 1 0 01-1.414 1.414L11 5.414V13a1 1 0 11-2 0V5.414L7.707 6.707a1 1 0 01-1.414 0z" clipRule="evenodd"/>
-    </svg>
-  ),
-}
+const navLinkClass = ({ isActive }: { isActive: boolean }) =>
+  clsx(
+    'flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all duration-150',
+    isActive
+      ? 'bg-amber-400/10 text-amber-400 border border-amber-400/15'
+      : 'text-ink-300 hover:text-ink-100 hover:bg-white/[0.04]'
+  )
 
 export default function Sidebar() {
-  const location = useLocation()
   const { data: demoStatus } = useDemoStatus()
   const clearDemo = useClearDemo()
   const startDemo = useStartDemo()
@@ -102,13 +135,6 @@ export default function Sidebar() {
   const [pwForm, setPwForm] = useState({ current: '', new: '', confirm: '' })
   const [pwError, setPwError] = useState('')
   const settingsRef = useRef<HTMLDivElement>(null)
-  const isReportsActive = location.pathname.startsWith('/reports')
-  const [reportsExpanded, setReportsExpanded] = useState(isReportsActive)
-
-  // Auto-expand when navigating to a report URL directly
-  useEffect(() => {
-    if (isReportsActive) setReportsExpanded(true)
-  }, [isReportsActive])
 
   useEffect(() => {
     if (!showSettings) return
@@ -155,79 +181,20 @@ export default function Sidebar() {
         {/* Nav */}
         <nav className="px-3 py-4 space-y-0.5">
         {NAV_ITEMS.map((item) => (
-          <NavLink
-            key={item.to}
-            to={item.to}
-            end={item.to === '/'}
-            className={({ isActive }) =>
-              clsx(
-                'flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all duration-150',
-                isActive
-                  ? 'bg-amber-400/10 text-amber-400 border border-amber-400/15'
-                  : 'text-ink-300 hover:text-ink-100 hover:bg-white/[0.04]'
-              )
-            }
-          >
+          <NavLink key={item.to} to={item.to} end={item.to === '/'} className={navLinkClass}>
             {item.icon}
             {item.label}
           </NavLink>
         ))}
 
-        {/* Reports with expandable sub-items */}
-        <button
-          onClick={() => setReportsExpanded(e => !e)}
-          className={clsx(
-            'w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all duration-150',
-            isReportsActive
-              ? 'bg-amber-400/10 text-amber-400 border border-amber-400/15'
-              : 'text-ink-300 hover:text-ink-100 hover:bg-white/[0.04]'
-          )}
-        >
-          {REPORTS_ICON}
-          Reports
-          <svg
-            viewBox="0 0 20 20"
-            fill="currentColor"
-            className={clsx('w-3 h-3 ml-auto transition-transform duration-150', reportsExpanded && 'rotate-90')}
-          >
-            <path fillRule="evenodd" d="M7.293 14.707a1 1 0 010-1.414L10.586 10 7.293 6.707a1 1 0 011.414-1.414l4 4a1 1 0 010 1.414l-4 4a1 1 0 01-1.414 0z" clipRule="evenodd"/>
-          </svg>
-        </button>
-        {reportsExpanded && (
-          <div className="ml-4 pl-3 border-l border-white/[0.06] space-y-0.5">
-            {REPORT_SUB_ITEMS.map(sub => (
-              <NavLink
-                key={sub.to}
-                to={sub.to}
-                className={({ isActive }) =>
-                  clsx(
-                    'block px-3 py-1.5 rounded-md text-xs font-medium transition-all duration-150',
-                    isActive
-                      ? 'text-amber-400 bg-amber-400/5'
-                      : 'text-ink-300 hover:text-ink-100 hover:bg-white/[0.03]'
-                  )
-                }
-              >
-                {sub.label}
-              </NavLink>
-            ))}
-          </div>
-        )}
-
-        <NavLink
-          to={IMPORT_ITEM.to}
-          className={({ isActive }) =>
-            clsx(
-              'flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all duration-150',
-              isActive
-                ? 'bg-amber-400/10 text-amber-400 border border-amber-400/15'
-                : 'text-ink-300 hover:text-ink-100 hover:bg-white/[0.04]'
-            )
-          }
-        >
-          {IMPORT_ITEM.icon}
-          {IMPORT_ITEM.label}
-        </NavLink>
+        {/* Reports section */}
+        <p className="px-3 pt-4 pb-1 text-2xs text-ink-500 font-medium uppercase tracking-wide">Reports</p>
+        {REPORT_ITEMS.map((item) => (
+          <NavLink key={item.to} to={item.to} className={navLinkClass}>
+            {item.icon}
+            {item.label}
+          </NavLink>
+        ))}
       </nav>
       </div>
 
