@@ -1,7 +1,7 @@
 import { useMemo, useState, type FormEvent } from 'react'
 import clsx from 'clsx'
 import {
-  Bar, BarChart, CartesianGrid, ComposedChart, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis,
+  Bar, BarChart, CartesianGrid, ComposedChart, Line, LineChart, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis,
   type TooltipProps,
 } from 'recharts'
 import {
@@ -494,6 +494,12 @@ export default function IncomePage() {
   const salaryData = firstSalaryIdx === -1 ? [] : salaryRowsAll.slice(firstSalaryIdx)
   const salaryEarners = seriesEarners.filter(e => e.monthly_salary_rate.some(r => r != null))
   const showHouseholdSalary = salaryEarners.length > 1
+  // January rows mark the start of each year on the salary chart. With at
+  // least two, the x-axis ticks move onto those lines and show just the year.
+  const salaryYearStarts = report
+    ? salaryData.filter((_, i) => report.months[firstSalaryIdx + i].endsWith('-01')).map(r => r.label as string)
+    : []
+  const salaryYearTicks = salaryYearStarts.length >= 2
 
   // ── Take-home category picker ──
   const pickableCategories = (incomeCategories ?? []).filter(
@@ -904,6 +910,9 @@ export default function IncomePage() {
                 <ResponsiveContainer width="100%" height="100%">
                   <LineChart data={salaryData} margin={{ top: 8, right: 16, bottom: 0, left: 8 }}>
                     <CartesianGrid vertical={false} stroke="rgba(255,255,255,0.04)" />
+                    {salaryYearStarts.map(label => (
+                      <ReferenceLine key={label} x={label} stroke="rgba(255,255,255,0.08)" />
+                    ))}
                     <XAxis
                       dataKey="label"
                       tick={AXIS_TICK}
@@ -911,6 +920,8 @@ export default function IncomePage() {
                       tickLine={false}
                       interval="preserveStartEnd"
                       minTickGap={24}
+                      ticks={salaryYearTicks ? salaryYearStarts : undefined}
+                      tickFormatter={salaryYearTicks ? (v: string) => v.slice(-4) : undefined}
                     />
                     <YAxis tick={AXIS_TICK} axisLine={false} tickLine={false} tickFormatter={(v: number) => formatCurrencyCompact(v)} />
                     <Tooltip
