@@ -17,7 +17,6 @@ from app.models.user import User
 from app.schemas.reports import (
     BudgetReport,
     CategoryTransactionsReport,
-    CategoryTrendsReport,
     EquityHistoryReport,
     MonthlyTotalsReport,
     NetWorthHistory,
@@ -28,7 +27,6 @@ from app.schemas.subscriptions import SubscriptionsReport
 from app.services.reporting import (
     build_budget_report,
     build_category_transactions,
-    build_category_trends,
     build_equity_history,
     build_monthly_totals,
     build_net_worth_history,
@@ -138,29 +136,14 @@ def get_spending_trends(
 
     Income categories are always shown as individual series.
 
+    Each series carries its per-month budget, and month-level income/expense
+    budget totals cover every budgeted category (for the Cash Flow overlay).
+
     Optionally specify year/month to anchor the end of the range to a specific
     month instead of the current month.
     """
     account_id_list = _parse_account_ids(account_ids)
     return build_spending_trends(db, months, account_id_list, top_n, year, month)
-
-
-@router.get("/category-trends", response_model=CategoryTrendsReport)
-def get_category_trends(
-    months: int = Query(6, ge=1, le=120, description="Rolling window in months (1-120)"),
-    year: Optional[int] = Query(None, ge=2000, le=2100, description="End year (defaults to current)"),
-    month: Optional[int] = Query(None, ge=1, le=12, description="End month (defaults to current)"),
-    account_ids: Optional[str] = Query(None, description="Comma-separated account IDs"),
-    db: Session = Depends(get_db),
-):
-    """
-    Per-category monthly actual spend and budget for every expense category.
-
-    No top-N cap — the client sums whichever categories are selected into a
-    single actual-vs-budget trend line.
-    """
-    account_id_list = _parse_account_ids(account_ids)
-    return build_category_trends(db, months, year, month, account_id_list)
 
 
 @router.get("/spending-averages/{year}/{month}", response_model=SpendingAveragesReport)

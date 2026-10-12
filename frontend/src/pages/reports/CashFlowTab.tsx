@@ -10,6 +10,19 @@ import {
 import clsx from 'clsx'
 import { type YearMonth, compareYearMonth, diffMonths, addMonths, yearMonthToInput, parseYearMonthInput } from './shared'
 
+const INCOME_COLOR = '#34d4b1'
+const EXPENSE_COLOR = '#f87171'
+const NET_COLOR = '#f5a623'
+
+const SERIES_LABELS: Record<string, string> = {
+  income: 'Income',
+  expense: 'Expenses',
+  net: 'Net',
+  incomeBudget: 'Income budget',
+  expenseBudget: 'Expense budget',
+  netBudget: 'Net budget',
+}
+
 export default function CashFlowTab() {
   const now = currentYearMonth()
   const cfMaxAnchor = (() => {
@@ -25,6 +38,7 @@ export default function CashFlowTab() {
   const [cfCustomEnd, setCfCustomEnd] = useState(() => yearMonthToInput(cfMaxAnchor))
   const [cfCustomError, setCfCustomError] = useState<string | null>(null)
   const [excludedCfCategories, setExcludedCfCategories] = useState<Set<string>>(new Set())
+  const [showBudget, setShowBudget] = useState(false)
 
   const { data: cfTrends, isLoading: cfLoading } = useSpendingTrends({ months: cfMonths, year: cfAnchor.year, month: cfAnchor.month, top_n: 50 })
 
@@ -34,6 +48,7 @@ export default function CashFlowTab() {
     name: s.category_name,
     isIncome: s.is_income,
     monthly: s.monthly_totals,
+    budgets: s.monthly_budgets,
     total: s.total,
   }))
 
@@ -53,6 +68,18 @@ export default function CashFlowTab() {
       !s.isIncome && excludedCfCategories.has(s.key) ? sum + (s.monthly[idx] ?? 0) : sum, 0)
     return Math.max(0, base - excluded)
   })
+  const adjustedIncomeBudgetByMonth = Array.from({ length: rawMonthCount }, (_, idx) => {
+    const base = cfTrends?.monthly_income_budgets[idx] ?? 0
+    const excluded = cfSeries.reduce((sum, s) =>
+      s.isIncome && excludedCfCategories.has(s.key) ? sum + (s.budgets[idx] ?? 0) : sum, 0)
+    return Math.max(0, base - excluded)
+  })
+  const adjustedExpenseBudgetByMonth = Array.from({ length: rawMonthCount }, (_, idx) => {
+    const base = cfTrends?.monthly_expense_budgets[idx] ?? 0
+    const excluded = cfSeries.reduce((sum, s) =>
+      !s.isIncome && excludedCfCategories.has(s.key) ? sum + (s.budgets[idx] ?? 0) : sum, 0)
+    return Math.max(0, base - excluded)
+  })
 
   // In custom/long-range views, trim months with no activity to avoid long empty runs.
   const monthIdxsAll = Array.from({ length: rawMonthCount }, (_, i) => i)
@@ -66,6 +93,8 @@ export default function CashFlowTab() {
   const cfLabels = includedMonthIdxs.map(i => rawCfLabels[i] ?? '')
   const cfIncomes = includedMonthIdxs.map(i => adjustedIncomeByMonth[i] ?? 0)
   const cfExpenses = includedMonthIdxs.map(i => adjustedExpenseByMonth[i] ?? 0)
+  const cfIncomeBudgets = includedMonthIdxs.map(i => adjustedIncomeBudgetByMonth[i] ?? 0)
+  const cfExpenseBudgets = includedMonthIdxs.map(i => adjustedExpenseBudgetByMonth[i] ?? 0)
 
   const totalIncome = cfIncomes.reduce((a: number, b: number) => a + b, 0)
   const totalExpenses = cfExpenses.reduce((a: number, b: number) => a + b, 0)
@@ -77,12 +106,25 @@ export default function CashFlowTab() {
 
   const barSize = monthCount <= 12 ? 28 : monthCount <= 24 ? 18 : monthCount <= 36 ? 12 : 8
 
-  const chartData = cfLabels.map((label: string, i: number) => ({
-    label,
-    income: Math.round(cfIncomes[i] * 100) / 100,
-    expense: -Math.round(cfExpenses[i] * 100) / 100,
-    net: Math.round((cfIncomes[i] - cfExpenses[i]) * 100) / 100,
-  }))
+  // A month with no budget is "no budget", not a $0 budget — null leaves a gap
+  // in the dashed line instead of a plunge to zero. Net budget needs both
+  // sides; with only expense budgets it would just mirror the expense line.
+  const chartData = cfLabels.map((label: string, i: number) => {
+    const incomeBudget = cfIncomeBudgets[i] !== 0 ? Math.round(cfIncomeBudgets[i] * 100) / 100 : null
+    const expenseBudget = cfExpenseBudgets[i] !== 0 ? Math.round(cfExpenseBudgets[i] * 100) / 100 : null
+    return {
+      label,
+      income: Math.round(cfIncomes[i] * 100) / 100,
+      expense: -Math.round(cfExpenses[i] * 100) / 100,
+      net: Math.round((cfIncomes[i] - cfExpenses[i]) * 100) / 100,
+      incomeBudget,
+      expenseBudget: expenseBudget != null ? -expenseBudget : null,
+      netBudget: incomeBudget != null && expenseBudget != null
+        ? Math.round((incomeBudget - expenseBudget) * 100) / 100
+        : null,
+    }
+  })
+  const hasBudget = chartData.some(d => d.incomeBudget != null || d.expenseBudget != null)
 
   const incomeSeries = cfSeries.filter(s => s.isIncome).sort((a, b) => b.total - a.total)
   const expenseSeries = cfSeries.filter(s => !s.isIncome).sort((a, b) => b.total - a.total)
@@ -132,6 +174,18 @@ export default function CashFlowTab() {
         <div className="flex flex-col items-end gap-3 mb-5">
           <div className="flex flex-col items-end gap-2">
             <div className="flex flex-wrap items-center justify-end gap-2 w-full">
+            <button
+              type="button"
+              onClick={() => setShowBudget(v => !v)}
+              className={clsx(
+                'px-3 py-1.5 text-xs font-medium rounded-lg border transition-colors',
+                showBudget
+                  ? 'border-amber-400/40 bg-amber-400/5 text-amber-300'
+                  : 'bg-surface-800 border-white/[0.06] text-ink-200 hover:bg-surface-700'
+              )}
+            >
+              Overlay budget
+            </button>
             {(() => {
               const startYm = cfRangeMode === 'preset'
                 ? addMonths(cfAnchor, -(Math.max(1, cfMonths) - 1))
@@ -281,24 +335,60 @@ export default function CashFlowTab() {
                   <Tooltip
                     contentStyle={{ background: '#161b24', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 8, fontFamily: 'DM Mono', fontSize: 12 }}
                     formatter={(value: number, name: string) => [
-                      name === 'net' ? formatCurrencySignedWhole(value) : formatCurrencyWhole(Math.abs(value)),
-                      name === 'income' ? 'Income' : name === 'expense' ? 'Expenses' : 'Net',
+                      name === 'net' || name === 'netBudget' ? formatCurrencySignedWhole(value) : formatCurrencyWhole(Math.abs(value)),
+                      SERIES_LABELS[name] ?? name,
                     ]}
                     labelStyle={{ color: '#e8e6e3', marginBottom: 4 }}
                   />
-                  <Bar dataKey="income" stackId="cf" fill="#34d4b1" radius={[3, 3, 0, 0]} barSize={barSize} />
-                  <Bar dataKey="expense" stackId="cf" fill="#f87171" radius={[0, 0, 3, 3]} barSize={barSize} />
+                  <Bar dataKey="income" stackId="cf" fill={INCOME_COLOR} radius={[3, 3, 0, 0]} barSize={barSize} />
+                  <Bar dataKey="expense" stackId="cf" fill={EXPENSE_COLOR} radius={[0, 0, 3, 3]} barSize={barSize} />
                   <Line
                     dataKey="net"
                     type="monotone"
-                    stroke="#f5a623"
+                    stroke={NET_COLOR}
                     strokeWidth={2}
-                    dot={{ r: 3, fill: '#f5a623', strokeWidth: 0 }}
-                    activeDot={{ r: 5, fill: '#f5a623', strokeWidth: 0 }}
+                    dot={{ r: 3, fill: NET_COLOR, strokeWidth: 0 }}
+                    activeDot={{ r: 5, fill: NET_COLOR, strokeWidth: 0 }}
                   />
+                  {showBudget && [
+                    { key: 'incomeBudget', color: INCOME_COLOR },
+                    { key: 'expenseBudget', color: EXPENSE_COLOR },
+                    { key: 'netBudget', color: NET_COLOR },
+                  ].map(b => (
+                    <Line
+                      key={b.key}
+                      dataKey={b.key}
+                      type="monotone"
+                      stroke={b.color}
+                      strokeWidth={1.5}
+                      strokeDasharray="5 5"
+                      dot={false}
+                      activeDot={{ r: 4, fill: b.color, strokeWidth: 0 }}
+                      isAnimationActive={false}
+                    />
+                  ))}
                 </ComposedChart>
               </ResponsiveContainer>
             </div>
+
+            {showBudget && (
+              <div className="flex flex-wrap items-center justify-center gap-5 text-xs text-ink-300">
+                {hasBudget ? (
+                  [
+                    { label: 'Income budget', color: INCOME_COLOR },
+                    { label: 'Expense budget', color: EXPENSE_COLOR },
+                    { label: 'Net budget', color: NET_COLOR },
+                  ].map(b => (
+                    <span key={b.label} className="inline-flex items-center gap-2">
+                      <span className="inline-block w-5 border-t-2 border-dashed" style={{ borderColor: b.color }} />
+                      {b.label}
+                    </span>
+                  ))
+                ) : (
+                  <span className="text-ink-500">No budget set for this period</span>
+                )}
+              </div>
+            )}
           </div>
         ) : (
           <div className="h-[220px] flex items-center justify-center text-ink-400 text-sm">

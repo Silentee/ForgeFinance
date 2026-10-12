@@ -36,7 +36,6 @@ export const QK = {
   reportTrends:  (params?: object) => ['reports', 'trends', params] as const,
   reportSpendingAverages: (year: number, month: number) => ['reports', 'spending-averages', year, month] as const,
   reportMonthlyTotals: (params?: object) => ['reports', 'monthly-totals', params] as const,
-  reportCategoryTrends: (params?: object) => ['reports', 'category-trends', params] as const,
   reportSubscriptions: (params?: object) => ['reports', 'subscriptions', params] as const,
   imports:       (accountId?: number) => ['imports', accountId] as const,
   meta:          () => ['meta'] as const,
@@ -449,13 +448,6 @@ export function useSpendingAverages(year: number, month: number) {
     queryKey: QK.reportSpendingAverages(year, month),
     queryFn: () => reportsApi.spendingAverages(year, month),
     enabled: !!year && !!month,
-  })
-}
-
-export function useCategoryTrends(params?: { months?: number; year?: number; month?: number }) {
-  return useQuery({
-    queryKey: QK.reportCategoryTrends(params),
-    queryFn: () => reportsApi.categoryTrends(params),
   })
 }
 

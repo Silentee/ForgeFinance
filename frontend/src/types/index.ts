@@ -332,6 +332,7 @@ export interface CategoryTrendSeries {
   category_name: string
   is_income: boolean
   monthly_totals: number[]
+  monthly_budgets: number[]
   average: number
   total: number
 }
@@ -343,20 +344,8 @@ export interface SpendingTrendsReport {
   monthly_income_totals: number[]
   monthly_expense_totals: number[]
   monthly_net_totals: number[]
-}
-
-export interface CategoryMonthlySeries {
-  category_id?: number | null
-  category_name: string
-  parent_category_name?: string | null
-  actuals: number[]
-  budgets: number[]
-}
-
-export interface CategoryTrendsReport {
-  months: string[]
-  month_labels: string[]
-  series: CategoryMonthlySeries[]
+  monthly_income_budgets: number[]
+  monthly_expense_budgets: number[]
 }
 
 export interface MonthlyTotalsReport {

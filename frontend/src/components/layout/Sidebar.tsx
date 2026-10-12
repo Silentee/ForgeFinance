@@ -67,7 +67,6 @@ const REPORT_SUB_ITEMS = [
   { to: '/reports/net-worth', label: 'Net Worth & Equity' },
   { to: '/reports/cash-flow', label: 'Cash Flow' },
   { to: '/reports/spending', label: 'Spending' },
-  { to: '/reports/spending-trends', label: 'Spending Trends' },
   { to: '/reports/emergency-fund', label: 'Emergency Fund' },
 ]
 

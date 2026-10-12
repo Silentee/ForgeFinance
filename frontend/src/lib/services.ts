@@ -8,7 +8,7 @@ import type {
   Category, CategoryCreate, CategoryUpdate,
   Budget, BudgetCreate, BudgetUpdate,
   BudgetVisibleCategories, BudgetVisibleCategoriesUpsert,
-  BudgetReport, CategoryTransactionsReport, NetWorthHistory, SpendingTrendsReport, CategoryTrendsReport, SpendingAveragesReport, MonthlyTotalsReport, EquityHistoryReport,
+  BudgetReport, CategoryTransactionsReport, NetWorthHistory, SpendingTrendsReport, SpendingAveragesReport, MonthlyTotalsReport, EquityHistoryReport,
   SubscriptionsReport, SubscriptionRule, SubscriptionRuleUpsert,
   SubscriptionNicknameUpsert, SubscriptionLinkRequest, SubscriptionUnlinkRequest,
   SubscriptionCadenceUpsert, SubscriptionStatusUpsert, SubscriptionCategoryUpsert,
@@ -217,9 +217,6 @@ export const reportsApi = {
 
   spendingTrends: (params?: { months?: number; year?: number; month?: number; top_n?: number; account_ids?: string }) =>
     apiClient.get<SpendingTrendsReport>('/reports/spending-trends', { params }).then(r => r.data),
-
-  categoryTrends: (params?: { months?: number; year?: number; month?: number; account_ids?: string }) =>
-    apiClient.get<CategoryTrendsReport>('/reports/category-trends', { params }).then(r => r.data),
 
   spendingAverages: (year: number, month: number, accountIds?: number[]) =>
     apiClient.get<SpendingAveragesReport>(`/reports/spending-averages/${year}/${month}`, {

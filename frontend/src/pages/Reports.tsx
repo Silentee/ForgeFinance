@@ -3,16 +3,14 @@ import { PageHeader } from '@/components/ui'
 import NetWorthTab from './reports/NetWorthTab'
 import CashFlowTab from './reports/CashFlowTab'
 import SpendingTab from './reports/SpendingTab'
-import SpendingTrendsTab from './reports/SpendingTrendsTab'
 import EmergencyFundTab from './reports/EmergencyFundTab'
 
-type ReportTab = 'spending' | 'spending-trends' | 'net-worth' | 'cash-flow' | 'emergency-fund'
+type ReportTab = 'spending' | 'net-worth' | 'cash-flow' | 'emergency-fund'
 
 const REPORT_TITLES: Record<ReportTab, string> = {
   'net-worth': 'Net Worth & Equity',
   'cash-flow': 'Cash Flow',
   'spending': 'Spending',
-  'spending-trends': 'Spending Trends',
   'emergency-fund': 'Emergency Fund',
 }
 
@@ -35,7 +33,6 @@ export default function ReportsPage() {
       {activeTab === 'net-worth' && <NetWorthTab />}
       {activeTab === 'cash-flow' && <CashFlowTab />}
       {activeTab === 'spending' && <SpendingTab />}
-      {activeTab === 'spending-trends' && <SpendingTrendsTab />}
       {activeTab === 'emergency-fund' && <EmergencyFundTab />}
     </div>
   )
