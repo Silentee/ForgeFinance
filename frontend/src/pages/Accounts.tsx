@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { useAccounts, useDeleteAccount, useCreateAccount, useUpdateAccount, useUpdateBalance, useBalanceHistory, useUpdateBalanceSnapshot, useDeleteBalanceSnapshot, useAccountTypeMap } from '@/hooks'
 import { Card, PageHeader, Button, AccountTypeDot, EmptyState, Spinner, Modal } from '@/components/ui'
 import { formatCurrency, formatCurrencyWhole, formatDate, todayLocal } from '@/lib/format'
@@ -709,6 +710,7 @@ function AccountRow({
 export default function AccountsPage() {
   const { data: accounts, isLoading } = useAccounts({ active_only: false })
   const accountTypes = useAccountTypeMap()
+  const navigate = useNavigate()
   const [showAdd, setShowAdd] = useState(false)
   const [detailAccount, setDetailAccount] = useState<Account | null>(null)
   const [editingBalanceAccountId, setEditingBalanceAccountId] = useState<number | null>(null)
@@ -817,6 +819,12 @@ export default function AccountsPage() {
                 )}
               />
             </div>
+            <Button size="sm" onClick={() => navigate('/import')} aria-label="Import CSV">
+              <svg viewBox="0 0 20 20" fill="currentColor" className="w-3.5 h-3.5">
+                <path fillRule="evenodd" d="M3 17a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zM6.293 6.707a1 1 0 010-1.414l3-3a1 1 0 011.414 0l3 3a1 1 0 01-1.414 1.414L11 5.414V13a1 1 0 11-2 0V5.414L7.707 6.707a1 1 0 01-1.414 0z" clipRule="evenodd"/>
+              </svg>
+              <span className="hidden sm:inline">Import</span>
+            </Button>
             <Button variant="primary" size="sm" onClick={() => setShowAdd(true)}>+ Add Account</Button>
           </div>
         }

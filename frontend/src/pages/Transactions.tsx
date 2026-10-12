@@ -1,5 +1,5 @@
 import { useState, useMemo, useEffect, useRef } from 'react'
-import { Link, useLocation } from 'react-router-dom'
+import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { useTransactions, useAccounts, useCategories, useCreateTransaction, useUpdateTransaction, useDeleteTransaction, useDebouncedValue } from '@/hooks'
 import { Card, PageHeader, Button, EmptyState, Spinner, Modal, FilterDropdown, CheckboxRow, CategorySelect } from '@/components/ui'
 import { formatCurrency, formatDate, toLocalDateString, todayLocal, sortBySortOrder } from '@/lib/format'
@@ -376,6 +376,7 @@ export default function TransactionsPage() {
   const [showAdd, setShowAdd] = useState(false)
 
   const location = useLocation()
+  const navigate = useNavigate()
 
   useEffect(() => {
     const sp = new URLSearchParams(location.search)
@@ -582,6 +583,12 @@ export default function TransactionsPage() {
         subtitle={filteredTransactions ? `${filteredTransactions.length} transactions` : undefined}
         action={
           <div className="flex items-center gap-2">
+            <Button size="sm" onClick={() => navigate('/import')} aria-label="Import CSV">
+              <svg viewBox="0 0 20 20" fill="currentColor" className="w-3.5 h-3.5">
+                <path fillRule="evenodd" d="M3 17a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zM6.293 6.707a1 1 0 010-1.414l3-3a1 1 0 011.414 0l3 3a1 1 0 01-1.414 1.414L11 5.414V13a1 1 0 11-2 0V5.414L7.707 6.707a1 1 0 01-1.414 0z" clipRule="evenodd"/>
+              </svg>
+              <span className="hidden sm:inline">Import</span>
+            </Button>
             <Button variant="primary" size="sm" onClick={() => setShowAdd(true)}>
               + Add Transaction
             </Button>

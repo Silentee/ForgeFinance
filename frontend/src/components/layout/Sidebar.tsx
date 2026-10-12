@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, type FormEvent } from 'react'
-import { NavLink } from 'react-router-dom'
+import { NavLink, useNavigate } from 'react-router-dom'
 import clsx from 'clsx'
 import { useDemoStatus, useClearDemo, useStartDemo, useCurrentUser, useChangePassword, useAppMeta } from '@/hooks'
 import { exportApi } from '@/lib/services'
@@ -70,15 +70,6 @@ const NAV_ITEMS: NavItem[] = [
       </svg>
     ),
   },
-  {
-    to: '/import',
-    label: 'Import',
-    icon: (
-      <svg viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4">
-        <path fillRule="evenodd" d="M3 17a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zM6.293 6.707a1 1 0 010-1.414l3-3a1 1 0 011.414 0l3 3a1 1 0 01-1.414 1.414L11 5.414V13a1 1 0 11-2 0V5.414L7.707 6.707a1 1 0 01-1.414 0z" clipRule="evenodd"/>
-      </svg>
-    ),
-  },
 ]
 
 const REPORT_ITEMS: NavItem[] = [
@@ -136,6 +127,7 @@ export default function Sidebar() {
   const { data: currentUser } = useCurrentUser()
   const { data: appMeta } = useAppMeta()
   const changePassword = useChangePassword()
+  const navigate = useNavigate()
   const [showConfirm, setShowConfirm] = useState(false)
   const [showSettings, setShowSettings] = useState(false)
   const [showChangePassword, setShowChangePassword] = useState(false)
@@ -283,6 +275,18 @@ export default function Sidebar() {
                     <path d="M4 4a2 2 0 00-2 2v1h16V6a2 2 0 00-2-2H4z"/><path fillRule="evenodd" d="M18 9H2v5a2 2 0 002 2h12a2 2 0 002-2V9zM4 13a1 1 0 011-1h1a1 1 0 110 2H5a1 1 0 01-1-1z" clipRule="evenodd"/>
                   </svg>
                   Account Types
+                </button>
+              </div>
+              <div className="border-t border-white/[0.06]">
+                <p className="px-3 pt-2 pb-1 text-2xs text-ink-500 font-medium uppercase tracking-wide">Import</p>
+                <button
+                  onClick={() => { navigate('/import'); setShowSettings(false) }}
+                  className="w-full text-left px-3 py-2.5 text-xs text-ink-200 hover:bg-white/[0.05] transition-colors flex items-center gap-2"
+                >
+                  <svg viewBox="0 0 20 20" fill="currentColor" className="w-3.5 h-3.5 text-ink-400">
+                    <path fillRule="evenodd" d="M3 17a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zM6.293 6.707a1 1 0 010-1.414l3-3a1 1 0 011.414 0l3 3a1 1 0 01-1.414 1.414L11 5.414V13a1 1 0 11-2 0V5.414L7.707 6.707a1 1 0 01-1.414 0z" clipRule="evenodd"/>
+                  </svg>
+                  Import CSV
                 </button>
               </div>
               <div className="border-t border-white/[0.06]">
