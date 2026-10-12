@@ -583,7 +583,8 @@ export default function IncomePage() {
               <span className="text-ink-300 text-xs font-normal ml-1">/yr</span>
             </div>
             <div className="text-xs text-ink-300 mt-1 truncate">
-              {formatCurrencyWhole(householdBaseSalary)} base salary
+              {formatCurrencyWhole(householdBaseSalary)} base
+              {householdTargetBonus > 0 && <> + {formatCurrencyWhole(householdTargetBonus)} target bonus</>}
             </div>
           </Card>
           <Card padding={false} className="p-4">
