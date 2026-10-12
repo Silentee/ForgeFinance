@@ -23,7 +23,9 @@ from app.schemas.reports import (
     SpendingAveragesReport,
     SpendingTrendsReport,
 )
+from app.schemas.income import IncomeReport
 from app.schemas.subscriptions import SubscriptionsReport
+from app.services.income import build_income_report
 from app.services.reporting import (
     build_budget_report,
     build_category_transactions,
@@ -223,6 +225,35 @@ def get_subscriptions_report(
     """
     account_id_list = _parse_account_ids(account_ids)
     return build_subscriptions_report(db, user.id, months, account_id_list)
+
+
+@router.get("/income", response_model=IncomeReport)
+def get_income_report(
+    months: Optional[int] = Query(
+        None,
+        ge=1,
+        le=600,
+        description="Months of history ending at year/month. Omit to start at the earliest income entry.",
+    ),
+    year: Optional[int] = Query(None, ge=2000, le=2100, description="End year (defaults to current)"),
+    month: Optional[int] = Query(None, ge=1, le=12, description="End month (defaults to current)"),
+    take_home_category_ids: Optional[str] = Query(
+        None,
+        description="Comma-separated income category IDs whose deposits count as take-home pay. "
+                    "Omit for 'Salary & Wages'; pass an empty value for none.",
+    ),
+    db: Session = Depends(get_db),
+):
+    """
+    Gross income over time per person (salary prorated by day, plus bonuses
+    and other one-time income in the month paid), the household total, and
+    take-home pay from transactions for a gross vs. net comparison.
+    """
+    take_home_ids = (
+        None if take_home_category_ids is None
+        else _parse_int_list(take_home_category_ids, "take_home_category_ids") or []
+    )
+    return build_income_report(db, months, year, month, take_home_ids)
 
 
 # ---------------------------------------------------------------------------

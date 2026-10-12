@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useState } from 'react'
-import { useQuery, useInfiniteQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { accountsApi, accountTypesApi, balancesApi, transactionsApi, categoriesApi, budgetsApi, reportsApi, subscriptionsApi, importsApi, institutionsApi, demoApi, authApi, metaApi, type TransactionFilters } from '@/lib/services'
+import { useQuery, useInfiniteQuery, useMutation, useQueryClient, keepPreviousData } from '@tanstack/react-query'
+import { accountsApi, accountTypesApi, balancesApi, transactionsApi, categoriesApi, budgetsApi, reportsApi, subscriptionsApi, incomeApi, importsApi, institutionsApi, demoApi, authApi, metaApi, type TransactionFilters } from '@/lib/services'
 import { getToken } from '@/lib/api'
-import type { AccountCreate, AccountUpdate, AccountTypeCreate, AccountTypeUpdate, AccountTypeDef, BudgetCreate, BudgetUpdate, TransactionUpdate, TransactionCreate, CategoryCreate, CategoryUpdate, CSVColumnMapping, BalanceSnapshotUpdate, SubscriptionRuleUpsert, SubscriptionNicknameUpsert, SubscriptionLinkRequest, SubscriptionUnlinkRequest, SubscriptionCadenceUpsert, SubscriptionStatusUpsert, SubscriptionCategoryUpsert, ManualSubscriptionCreate, ManualEntryUpdate } from '@/types'
+import type { AccountCreate, AccountUpdate, AccountTypeCreate, AccountTypeUpdate, AccountTypeDef, BudgetCreate, BudgetUpdate, TransactionUpdate, TransactionCreate, CategoryCreate, CategoryUpdate, CSVColumnMapping, BalanceSnapshotUpdate, SubscriptionRuleUpsert, SubscriptionNicknameUpsert, SubscriptionLinkRequest, SubscriptionUnlinkRequest, SubscriptionCadenceUpsert, SubscriptionStatusUpsert, SubscriptionCategoryUpsert, ManualSubscriptionCreate, ManualEntryUpdate, EarnerCreate, EarnerUpdate, IncomeEntryCreate, IncomeEntryUpdate } from '@/types'
 import { formatAccountType } from '@/lib/format'
 import toast from 'react-hot-toast'
 
@@ -37,6 +37,9 @@ export const QK = {
   reportSpendingAverages: (year: number, month: number) => ['reports', 'spending-averages', year, month] as const,
   reportMonthlyTotals: (params?: object) => ['reports', 'monthly-totals', params] as const,
   reportSubscriptions: (params?: object) => ['reports', 'subscriptions', params] as const,
+  reportIncome:  (params?: object) => ['reports', 'income', params] as const,
+  earners:       () => ['income', 'earners'] as const,
+  incomeEntries: (params?: object) => ['income', 'entries', params] as const,
   imports:       (accountId?: number) => ['imports', accountId] as const,
   meta:          () => ['meta'] as const,
 }
@@ -612,6 +615,69 @@ export function useUnlinkSubscription() {
     },
     onError: (e: Error) => toast.error(e.message),
   })
+}
+
+// ─── Income ───────────────────────────────────────────────────────────────────
+
+export function useIncomeReport(params: { months?: number; year?: number; month?: number; takeHomeCategoryIds?: number[] }) {
+  return useQuery({
+    queryKey: QK.reportIncome(params),
+    queryFn: () => reportsApi.income(params),
+    // Hold the previous chart while a range/category change refetches.
+    placeholderData: keepPreviousData,
+  })
+}
+
+export function useEarners() {
+  return useQuery({ queryKey: QK.earners(), queryFn: incomeApi.listEarners })
+}
+
+export function useIncomeEntries(params?: { earner_id?: number }) {
+  return useQuery({ queryKey: QK.incomeEntries(params), queryFn: () => incomeApi.listEntries(params) })
+}
+
+// Every income write changes both the editable lists and the report.
+function useIncomeMutation<TVars>(mutationFn: (vars: TVars) => Promise<unknown>, successMessage: string) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn,
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['income'] })
+      qc.invalidateQueries({ queryKey: ['reports'] })
+      toast.success(successMessage)
+    },
+    onError: (e: Error) => toast.error(e.message),
+  })
+}
+
+export function useCreateEarner() {
+  return useIncomeMutation((data: EarnerCreate) => incomeApi.createEarner(data), 'Person added')
+}
+
+export function useUpdateEarner() {
+  return useIncomeMutation(
+    ({ id, data }: { id: number; data: EarnerUpdate }) => incomeApi.updateEarner(id, data),
+    'Person updated',
+  )
+}
+
+export function useDeleteEarner() {
+  return useIncomeMutation((id: number) => incomeApi.deleteEarner(id), 'Person removed')
+}
+
+export function useCreateIncomeEntry() {
+  return useIncomeMutation((data: IncomeEntryCreate) => incomeApi.createEntry(data), 'Income entry saved')
+}
+
+export function useUpdateIncomeEntry() {
+  return useIncomeMutation(
+    ({ id, data }: { id: number; data: IncomeEntryUpdate }) => incomeApi.updateEntry(id, data),
+    'Income entry updated',
+  )
+}
+
+export function useDeleteIncomeEntry() {
+  return useIncomeMutation((id: number) => incomeApi.deleteEntry(id), 'Income entry deleted')
 }
 
 // ─── Imports ──────────────────────────────────────────────────────────────────

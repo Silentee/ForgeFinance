@@ -56,7 +56,7 @@ backend/app/
 └── core/config.py    # Settings loaded from .env
 ```
 
-**API Base:** `/api/v1`. Routes: `/auth`, `/institutions`, `/accounts`, `/account-types`, `/transactions`, `/categories`, `/budgets`, `/imports`, `/balances`, `/reports`, `/subscriptions`, `/export`, `/demo`, `/meta`. Everything except `/auth` and `/meta` requires a Bearer token (see Auth below).
+**API Base:** `/api/v1`. Routes: `/auth`, `/institutions`, `/accounts`, `/account-types`, `/transactions`, `/categories`, `/budgets`, `/imports`, `/balances`, `/reports`, `/subscriptions`, `/income`, `/export`, `/demo`, `/meta`. Everything except `/auth` and `/meta` requires a Bearer token (see Auth below).
 
 **Key Models:**
 - `Institution` → `Account` → `Transaction` (main hierarchy)
@@ -64,6 +64,7 @@ backend/app/
 - `BalanceSnapshot` (point-in-time values; **all** account balances are snapshot-driven — see Balance tracking)
 - `Budget` (monthly targets per category; unique on category+year+month)
 - `AccountTypeDef` (DB-backed, user-editable account types; replaces the old hardcoded enum)
+- `Earner` → `IncomeEntry` (household members and their gross income: salary changes plus one-time bonus/other payments)
 - `User` (single admin login; nullable `user_id` FKs exist on core tables for future multi-user but are not yet enforced in endpoints)
 
 **Auth:** First run has no user — `POST /auth/setup` creates the admin. Thereafter `POST /auth/login` returns a JWT (HS256, `SECRET_KEY` auto-generated into `.env` on first boot). The frontend stores it in localStorage and sends it as `Authorization: Bearer`.
@@ -74,7 +75,7 @@ backend/app/
 
 ```
 frontend/src/
-├── pages/            # Dashboard, Accounts, Transactions, Budget, Subscriptions, Reports, Import
+├── pages/            # Dashboard, Accounts, Transactions, Budget, Income, Subscriptions, Reports, Import
 ├── components/       # Layout (RootLayout, Sidebar) and UI primitives
 ├── hooks/            # TanStack Query hooks for data fetching
 ├── lib/
@@ -100,6 +101,7 @@ SQLite stored at `backend/app.db`. Created automatically on first backend startu
 - **Plaid-ready architecture:** Models have nullable Plaid fields (plaid_account_id, plaid_transaction_id) for future live bank syncing
 - **Balance tracking:** All account balances are snapshot-driven. `Account.current_balance` is a denormalized cache of the latest-dated `BalanceSnapshot`. Every snapshot write goes through `services/balances.py::record_snapshot`, which recomputes the cache from the newest snapshot — so a backdated entry never overwrites the current balance. CSV transaction imports do **not** recompute balances; enter balances directly (Accounts page) or import balance-history CSVs.
 - **App version:** `version` in `backend/pyproject.toml` is the single source of truth. `core/version.py` parses it at import (via `paths.resource_dir()`, so it works in dev, Docker, and the frozen desktop build) into `settings.app_version`; `GET /api/v1/meta` serves it and the sidebar renders it via `useAppMeta()`. Never hardcode a version string anywhere else — `frontend/package.json` is pinned at `0.0.0` on purpose.
+- **Gross income:** Paychecks only appear in transactions as take-home deposits, so gross pay is entered separately per `Earner`. A `salary` `IncomeEntry` is an annual rate in effect from its date until that person's next salary entry (a step function like balance snapshots; 0 = stopped working). A month's gross is prorated by day, and `bonus`/`other` entries count in the month paid. `services/income.py::build_income_report` compares gross against take-home: the take-home categories (default "Salary & Wages") aggregated via `reporting._aggregate_monthly`, so the numbers match Cash Flow and Budget.
 - **Net worth calculation:** Sum of all account balances (credit cards and liabilities subtract from total)
 - **Reporting:** Lives in `services/reporting.py`; endpoints in `api/endpoints/reports.py` are thin wrappers. Per-month aggregation with annualized-expense spreading is centralized in `_aggregate_monthly`.
 - **Demo data:** Seeded on first-ever startup when no real accounts exist. "End Demo" (Sidebar) clears it. Demo-seeded budgets carry `is_demo=True` (like demo accounts) and are always removed on clear, so leaving demo never leaves demo targets on the budget page even after the user has added a real account. User-created budgets (`is_demo=False`) survive; if no real account remains, the clear also wipes any stray budgets so the sandbox starts fresh.

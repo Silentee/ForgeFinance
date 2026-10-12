@@ -3,7 +3,7 @@ from sqlalchemy.orm import Session
 from pydantic import BaseModel
 
 from app.db.session import get_db
-from app.models import Account, Transaction, BalanceSnapshot, Budget
+from app.models import Account, Transaction, BalanceSnapshot, Budget, Earner, IncomeEntry
 
 router = APIRouter()
 
@@ -72,6 +72,17 @@ def clear_demo_data(db: Session = Depends(get_db)):
     has_real_accounts = db.query(Account).filter(Account.is_demo == False).count() > 0
     if not has_real_accounts:
         db.query(Budget).delete(synchronize_session=False)
+
+    # The demo earner and its income history. Bulk deletes skip ORM cascades,
+    # so entries go first. People the user added (is_demo=False) are kept.
+    demo_earner_ids = [e.id for e in db.query(Earner.id).filter(Earner.is_demo == True)]
+    if demo_earner_ids:
+        db.query(IncomeEntry).filter(IncomeEntry.earner_id.in_(demo_earner_ids)).delete(
+            synchronize_session=False
+        )
+        db.query(Earner).filter(Earner.id.in_(demo_earner_ids)).delete(
+            synchronize_session=False
+        )
 
     # Delete the demo accounts themselves
     db.query(Account).filter(Account.is_demo == True).delete(

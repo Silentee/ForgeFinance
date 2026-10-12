@@ -19,6 +19,7 @@ from app.models.transaction import Transaction
 from app.models.budget import Budget
 from app.models.budget_visibility import BudgetVisibleCategories
 from app.models.subscription_rule import SubscriptionRule
+from app.models.income import Earner, IncomeEntry
 from app.models.user import User
 
 __all__ = [
@@ -28,5 +29,6 @@ __all__ = [
     "BalanceSnapshot", "ImportSource", "Transaction", "Budget",
     "BudgetVisibleCategories",
     "SubscriptionRule",
+    "Earner", "IncomeEntry",
     "User",
 ]

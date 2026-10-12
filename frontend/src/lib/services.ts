@@ -14,6 +14,7 @@ import type {
   SubscriptionCadenceUpsert, SubscriptionStatusUpsert, SubscriptionCategoryUpsert,
   ManualSubscriptionCreate,
   ManualEntryUpdate, MerchantKeyResolution,
+  Earner, EarnerCreate, EarnerUpdate, IncomeEntry, IncomeEntryCreate, IncomeEntryUpdate, IncomeReport,
   ImportSource, CSVImportResult, CSVColumnMapping,
   BalanceSnapshot, BalanceSnapshotUpdate,
   AppMeta,
@@ -231,6 +232,45 @@ export const reportsApi = {
 
   subscriptions: (params?: { months?: number; account_ids?: string }) =>
     apiClient.get<SubscriptionsReport>('/reports/subscriptions', { params }).then(r => r.data),
+
+  // takeHomeCategoryIds: undefined = server default ('Salary & Wages'); [] = none.
+  income: (params: { months?: number; year?: number; month?: number; takeHomeCategoryIds?: number[] }) =>
+    apiClient.get<IncomeReport>('/reports/income', {
+      params: {
+        months: params.months,
+        year: params.year,
+        month: params.month,
+        take_home_category_ids: params.takeHomeCategoryIds?.join(','),
+      },
+    }).then(r => r.data),
+}
+
+// ─── Income ───────────────────────────────────────────────────────────────────
+
+export const incomeApi = {
+  listEarners: () =>
+    apiClient.get<Earner[]>('/income/earners').then(r => r.data),
+
+  createEarner: (data: EarnerCreate) =>
+    apiClient.post<Earner>('/income/earners', data).then(r => r.data),
+
+  updateEarner: (id: number, data: EarnerUpdate) =>
+    apiClient.patch<Earner>(`/income/earners/${id}`, data).then(r => r.data),
+
+  deleteEarner: (id: number) =>
+    apiClient.delete(`/income/earners/${id}`),
+
+  listEntries: (params?: { earner_id?: number }) =>
+    apiClient.get<IncomeEntry[]>('/income/entries', { params }).then(r => r.data),
+
+  createEntry: (data: IncomeEntryCreate) =>
+    apiClient.post<IncomeEntry>('/income/entries', data).then(r => r.data),
+
+  updateEntry: (id: number, data: IncomeEntryUpdate) =>
+    apiClient.patch<IncomeEntry>(`/income/entries/${id}`, data).then(r => r.data),
+
+  deleteEntry: (id: number) =>
+    apiClient.delete(`/income/entries/${id}`),
 }
 
 // ─── Subscription rules ───────────────────────────────────────────────────────

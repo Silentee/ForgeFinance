@@ -260,6 +260,81 @@ export interface BudgetVisibleCategoriesUpsert {
   category_ids: number[]
 }
 
+// ─── Income ───────────────────────────────────────────────────────────────────
+
+export interface Earner {
+  id: number
+  name: string
+  color: string | null
+  sort_order: number
+  is_demo: boolean
+}
+
+export interface EarnerCreate {
+  name: string
+  color?: string | null
+  sort_order?: number
+}
+
+export interface EarnerUpdate {
+  name?: string
+  color?: string | null
+  sort_order?: number
+}
+
+// salary: annual gross rate in effect from effective_date until the next
+// salary entry; bonus/other: one-time gross amount paid on effective_date.
+export type IncomeKind = 'salary' | 'bonus' | 'other'
+
+export interface IncomeEntry {
+  id: number
+  earner_id: number
+  earner_name: string | null
+  kind: IncomeKind
+  effective_date: string
+  amount: number
+  employer: string | null
+  notes: string | null
+}
+
+export interface IncomeEntryCreate {
+  earner_id: number
+  kind: IncomeKind
+  effective_date: string
+  amount: number
+  employer?: string | null
+  notes?: string | null
+}
+
+export interface IncomeEntryUpdate {
+  earner_id?: number
+  kind?: IncomeKind
+  effective_date?: string
+  amount?: number
+  employer?: string | null
+  notes?: string | null
+}
+
+export interface IncomeEarnerSeries {
+  earner_id: number
+  name: string
+  color: string | null
+  monthly_salary_rate: (number | null)[]
+  monthly_gross: number[]
+  monthly_one_time: number[]
+  current_salary: number
+}
+
+export interface IncomeReport {
+  months: string[]
+  month_labels: string[]
+  earners: IncomeEarnerSeries[]
+  household_monthly_gross: number[]
+  monthly_take_home: number[]
+  take_home_category_ids: number[]
+  current_household_salary: number
+}
+
 // ─── Reports ──────────────────────────────────────────────────────────────────
 
 export interface BudgetLineItem {

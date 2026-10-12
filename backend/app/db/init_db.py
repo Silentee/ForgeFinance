@@ -20,7 +20,7 @@ from sqlalchemy import inspect
 from app.core.paths import resource_dir
 from app.db.session import engine, SessionLocal, Base
 from app.models import (
-    Category, Account, Transaction, BalanceSnapshot, Budget,
+    Category, Account, Transaction, BalanceSnapshot, Budget, Earner, IncomeEntry,
     DEFAULT_CATEGORIES,
     AccountTypeDef, DEFAULT_ACCOUNT_TYPES,
 )
@@ -607,6 +607,26 @@ def seed_demo_data(db):
                     is_demo=True,
                 )
                 db.add(budget)
+
+    # === Create Demo Income ===
+    # Gross salary history behind the "Salary & Wages" deposits above:
+    # $6,400/mo take-home is roughly 70% of gross once the raise and bonus land.
+
+    def months_back(n: int) -> date:
+        total = today.year * 12 + today.month - 1 - n
+        return date(total // 12, total % 12 + 1, 1)
+
+    demo_earner = Earner(name="Demo Earner", is_demo=True, sort_order=0)
+    db.add(demo_earner)
+    db.flush()
+    db.add_all([
+        IncomeEntry(earner_id=demo_earner.id, kind="salary", effective_date=months_back(24),
+                    amount=Decimal("98000.00"), employer="Demo Corp"),
+        IncomeEntry(earner_id=demo_earner.id, kind="bonus", effective_date=months_back(10).replace(day=15),
+                    amount=Decimal("5000.00"), employer="Demo Corp", notes="Annual bonus"),
+        IncomeEntry(earner_id=demo_earner.id, kind="salary", effective_date=months_back(7),
+                    amount=Decimal("106000.00"), employer="Demo Corp", notes="Promotion"),
+    ])
 
     db.commit()
 
