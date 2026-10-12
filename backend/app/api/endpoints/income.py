@@ -13,6 +13,7 @@ from app.schemas.income import (
     IncomeEntryRead,
     IncomeEntryUpdate,
 )
+from app.services.income import default_bonus_year
 
 router = APIRouter()
 
@@ -27,7 +28,20 @@ def _to_entry_read(entry: IncomeEntry) -> IncomeEntryRead:
         amount=float(entry.amount),
         employer=entry.employer,
         notes=entry.notes,
+        target_bonus_pct=float(entry.target_bonus_pct) if entry.target_bonus_pct is not None else None,
+        bonus_year=entry.bonus_year,
     )
+
+
+def _normalize_kind_fields(entry: IncomeEntry):
+    """Keep kind-specific fields on the kind they belong to, and give a bonus
+    with no performance year the default one."""
+    if entry.kind != "salary":
+        entry.target_bonus_pct = None
+    if entry.kind != "bonus":
+        entry.bonus_year = None
+    elif entry.bonus_year is None:
+        entry.bonus_year = default_bonus_year(entry.effective_date)
 
 
 def _ensure_unique_salary_date(
@@ -123,6 +137,7 @@ def create_entry(payload: IncomeEntryCreate, db: Session = Depends(get_db)):
     _ensure_unique_salary_date(db, payload.earner_id, payload.kind, payload.effective_date)
 
     entry = IncomeEntry(**payload.model_dump())
+    _normalize_kind_fields(entry)
     db.add(entry)
     db.commit()
     db.refresh(entry)
@@ -152,6 +167,7 @@ def update_entry(entry_id: int, payload: IncomeEntryUpdate, db: Session = Depend
 
     for field, value in changes.items():
         setattr(entry, field, value)
+    _normalize_kind_fields(entry)
 
     db.commit()
     db.refresh(entry)

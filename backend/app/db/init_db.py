@@ -610,22 +610,36 @@ def seed_demo_data(db):
 
     # === Create Demo Income ===
     # Gross salary history behind the "Salary & Wages" deposits above:
-    # $6,400/mo take-home is roughly 70% of gross once the raise and bonus land.
+    # $6,400/mo take-home is roughly 70% of base gross once the raise lands.
+    # The annual bonus is paid each March for the prior year, at ~110% of a
+    # 10% target on the year-end base.
 
     def months_back(n: int) -> date:
         total = today.year * 12 + today.month - 1 - n
         return date(total // 12, total % 12 + 1, 1)
+
+    promotion = months_back(7)
+    bonus_paid = date(today.year, 3, 15)
+    if bonus_paid > today:
+        bonus_paid = date(today.year - 1, 3, 15)
+    bonus_year = bonus_paid.year - 1
+    year_end_base, year_end_pct = (
+        (106000, 12) if promotion <= date(bonus_year, 12, 31) else (98000, 10)
+    )
+    bonus_amount = round(year_end_base * year_end_pct / 100 * 1.1)
 
     demo_earner = Earner(name="Demo Earner", is_demo=True, sort_order=0)
     db.add(demo_earner)
     db.flush()
     db.add_all([
         IncomeEntry(earner_id=demo_earner.id, kind="salary", effective_date=months_back(24),
-                    amount=Decimal("98000.00"), employer="Demo Corp"),
-        IncomeEntry(earner_id=demo_earner.id, kind="bonus", effective_date=months_back(10).replace(day=15),
-                    amount=Decimal("5000.00"), employer="Demo Corp", notes="Annual bonus"),
-        IncomeEntry(earner_id=demo_earner.id, kind="salary", effective_date=months_back(7),
-                    amount=Decimal("106000.00"), employer="Demo Corp", notes="Promotion"),
+                    amount=Decimal("98000.00"), target_bonus_pct=Decimal("10.00"), employer="Demo Corp"),
+        IncomeEntry(earner_id=demo_earner.id, kind="bonus", effective_date=bonus_paid,
+                    bonus_year=bonus_year, amount=Decimal(bonus_amount),
+                    employer="Demo Corp", notes="Annual bonus"),
+        IncomeEntry(earner_id=demo_earner.id, kind="salary", effective_date=promotion,
+                    amount=Decimal("106000.00"), target_bonus_pct=Decimal("12.00"),
+                    employer="Demo Corp", notes="Promotion"),
     ])
 
     db.commit()

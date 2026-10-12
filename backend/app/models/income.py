@@ -50,8 +50,11 @@ class IncomeEntry(Base):
     kind='salary': amount is the ANNUAL gross base rate, in effect from
     effective_date until the earner's next salary entry (a step function, like
     balance snapshots). An amount of 0 means income stopped (left a job, leave).
+    target_bonus_pct is the annual bonus target (% of base) that comes with it.
 
     kind='bonus' | 'award' | 'other': a one-time gross amount paid on effective_date.
+    A 'bonus' is the annual performance bonus; bonus_year is the performance
+    year it pays out for, compared against that year's target.
     """
     __tablename__ = "income_entries"
 
@@ -71,6 +74,11 @@ class IncomeEntry(Base):
     amount: Mapped[float] = mapped_column(Numeric(14, 2), nullable=False)
     employer: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    # Salary entries only: target annual bonus as a % of base (null/0 = none).
+    target_bonus_pct: Mapped[Optional[float]] = mapped_column(Numeric(6, 2), nullable=True)
+    # Bonus entries only: the performance year the bonus is for.
+    bonus_year: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(

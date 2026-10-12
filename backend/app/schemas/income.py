@@ -67,6 +67,10 @@ class IncomeEntryCreate(BaseModel):
     amount: float = Field(ge=0)
     employer: Optional[str] = Field(None, max_length=255)
     notes: Optional[str] = None
+    # salary only: target annual bonus, % of base
+    target_bonus_pct: Optional[float] = Field(None, ge=0, le=1000)
+    # bonus only: performance year (defaults to the year before it was paid)
+    bonus_year: Optional[int] = Field(None, ge=1900, le=2200)
 
 
 class IncomeEntryUpdate(BaseModel):
@@ -76,6 +80,8 @@ class IncomeEntryUpdate(BaseModel):
     amount: Optional[float] = Field(None, ge=0)
     employer: Optional[str] = Field(None, max_length=255)
     notes: Optional[str] = None
+    target_bonus_pct: Optional[float] = Field(None, ge=0, le=1000)
+    bonus_year: Optional[int] = Field(None, ge=1900, le=2200)
 
 
 class IncomeEntryRead(BaseModel):
@@ -87,11 +93,26 @@ class IncomeEntryRead(BaseModel):
     amount: float
     employer: Optional[str]
     notes: Optional[str]
+    target_bonus_pct: Optional[float]
+    bonus_year: Optional[int]
 
 
 # ---------------------------------------------------------------------------
 # Income report
 # ---------------------------------------------------------------------------
+
+class IncomeBonusYear(BaseModel):
+    """One performance year's annual bonus: target vs what was paid for it."""
+    year: int
+    # Base and target % in effect on Dec 31 of the year (None: no salary yet).
+    base_salary: Optional[float]
+    target_pct: Optional[float]
+    target_amount: Optional[float]
+    # Sum of annual bonuses paid for this year, whenever paid; None if none yet.
+    actual_amount: Optional[float]
+    attainment_pct: Optional[float]   # actual / target * 100
+    in_progress: bool                 # the year hasn't ended yet
+
 
 class IncomeEarnerSeries(BaseModel):
     earner_id: int
@@ -100,11 +121,17 @@ class IncomeEarnerSeries(BaseModel):
     # Annual base salary in effect at each month's end; None before the
     # earner's first salary entry.
     monthly_salary_rate: list[Optional[float]]
+    # Target bonus % in effect at each month's end, aligned with
+    # monthly_salary_rate (0 when the salary carries no target).
+    monthly_target_bonus_pct: list[Optional[float]]
     # Prorated salary plus one-time items paid that month.
     monthly_gross: list[float]
     # The one-time (bonus/award/other) part of monthly_gross.
     monthly_one_time: list[float]
-    current_salary: float   # annual rate in effect today
+    current_salary: float          # annual rate in effect today
+    current_target_bonus: float    # target bonus on today's rate and %
+    # Performance years in the window with a target or a paid bonus, newest first.
+    bonus_years: list[IncomeBonusYear]
 
 
 class IncomeReport(BaseModel):
@@ -117,3 +144,4 @@ class IncomeReport(BaseModel):
     monthly_take_home: list[float]
     take_home_category_ids: list[int]
     current_household_salary: float
+    current_household_target_bonus: float

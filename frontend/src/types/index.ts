@@ -284,6 +284,8 @@ export interface EarnerUpdate {
 
 // salary: annual gross rate in effect from effective_date until the next
 // salary entry; bonus/award/other: one-time gross amount paid on effective_date.
+// A bonus is the annual performance bonus, compared against its bonus_year's
+// target (target_bonus_pct of the salary entry in effect that Dec 31).
 export type IncomeKind = 'salary' | 'bonus' | 'award' | 'other'
 
 export interface IncomeEntry {
@@ -295,6 +297,8 @@ export interface IncomeEntry {
   amount: number
   employer: string | null
   notes: string | null
+  target_bonus_pct: number | null  // salary only, % of base
+  bonus_year: number | null        // bonus only, performance year
 }
 
 export interface IncomeEntryCreate {
@@ -304,6 +308,8 @@ export interface IncomeEntryCreate {
   amount: number
   employer?: string | null
   notes?: string | null
+  target_bonus_pct?: number | null
+  bonus_year?: number | null
 }
 
 export interface IncomeEntryUpdate {
@@ -313,6 +319,18 @@ export interface IncomeEntryUpdate {
   amount?: number
   employer?: string | null
   notes?: string | null
+  target_bonus_pct?: number | null
+  bonus_year?: number | null
+}
+
+export interface IncomeBonusYear {
+  year: number
+  base_salary: number | null      // base in effect on Dec 31
+  target_pct: number | null
+  target_amount: number | null
+  actual_amount: number | null    // null: not paid / not entered yet
+  attainment_pct: number | null
+  in_progress: boolean
 }
 
 export interface IncomeEarnerSeries {
@@ -320,9 +338,12 @@ export interface IncomeEarnerSeries {
   name: string
   color: string | null
   monthly_salary_rate: (number | null)[]
+  monthly_target_bonus_pct: (number | null)[]
   monthly_gross: number[]
   monthly_one_time: number[]
   current_salary: number
+  current_target_bonus: number
+  bonus_years: IncomeBonusYear[]   // newest first
 }
 
 export interface IncomeReport {
@@ -333,6 +354,7 @@ export interface IncomeReport {
   monthly_take_home: number[]
   take_home_category_ids: number[]
   current_household_salary: number
+  current_household_target_bonus: number
 }
 
 // ─── Reports ──────────────────────────────────────────────────────────────────

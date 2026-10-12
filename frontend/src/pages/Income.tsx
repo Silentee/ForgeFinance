@@ -1,7 +1,7 @@
 import { useMemo, useState, type FormEvent } from 'react'
 import clsx from 'clsx'
 import {
-  Bar, CartesianGrid, ComposedChart, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis,
+  Bar, BarChart, CartesianGrid, ComposedChart, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis,
   type TooltipProps,
 } from 'recharts'
 import {
@@ -12,7 +12,7 @@ import {
 import { Button, Card, CheckboxRow, EmptyState, FilterDropdown, Modal, PageHeader, Spinner } from '@/components/ui'
 import { currentYearMonth, formatCurrencyCompact, formatCurrencyWhole, formatDate, formatPercent, todayLocal } from '@/lib/format'
 import { addMonths, type YearMonth } from './reports/shared'
-import type { Earner, IncomeEntry, IncomeKind, IncomeReport } from '@/types'
+import type { Earner, IncomeBonusYear, IncomeEarnerSeries, IncomeEntry, IncomeKind, IncomeReport } from '@/types'
 
 // Categorical steps validated together with the take-home amber
 // (dataviz validate_palette.js, dark mode, surface #161b24). Assigned to
@@ -22,6 +22,9 @@ const OVERFLOW_COLOR = '#8a8580' // a 5th+ person gets neutral ink, never a reus
 const TAKE_HOME_COLOR = '#c98500'
 const HOUSEHOLD_COLOR = '#c8c3bb'
 const SURFACE_COLOR = '#161b24'
+// A bonus target is drawn as a translucent track in the person's color, with
+// the paid amount as a solid bar inside it.
+const GHOST_OPACITY = 0.3
 
 const AXIS_TICK = { fill: '#8a8580', fontSize: 11, fontFamily: 'DM Mono' }
 const TOOLTIP_STYLE = {
@@ -34,7 +37,7 @@ const INPUT_CLASS =
 
 const KIND_LABELS: Record<IncomeKind, string> = {
   salary: 'Salary change',
-  bonus: 'Bonus',
+  bonus: 'Annual bonus',
   award: 'Award',
   other: 'Other one-time',
 }
@@ -74,6 +77,8 @@ const earnerKey = (id: number) => `e${id}`
 const round2 = (v: number) => Math.round(v * 100) / 100
 const sumSlice = (arr: number[], from: number, to: number) =>
   arr.slice(Math.max(0, from), Math.max(0, to)).reduce((a, b) => a + b, 0)
+// "15%", "12.5%": a target % as entered, without padding decimals.
+const pctLabel = (v: number) => `${Number(v.toFixed(2))}%`
 
 function earnerColors(earners: Earner[] | undefined): Map<number, string> {
   const map = new Map<number, string>()
@@ -121,15 +126,93 @@ function buildBuckets(report: IncomeReport, mode: 'year' | 'month', anchor: Year
   return first === -1 ? [] : buckets.slice(first)
 }
 
-// ─── Small pieces ─────────────────────────────────────────────────────────────
+// ─── Annual bonus ─────────────────────────────────────────────────────────────
 
-function Swatch({ color, kind = 'bar' }: { color: string; kind?: 'bar' | 'line' }) {
-  return kind === 'bar'
-    ? <span className="inline-block w-2.5 h-2.5 rounded-sm shrink-0" style={{ background: color }} />
-    : <span className="inline-block w-4 border-t-2 shrink-0" style={{ borderColor: color }} />
+interface BonusYearGroup {
+  year: number
+  inProgress: boolean
+  rows: { earner: IncomeEarnerSeries; bonus: IncomeBonusYear }[]
+  target: number
+  paid: number
+  // Household attainment, only once everyone with a target has been paid.
+  attainment: number | null
 }
 
-function ChartLegend({ items }: { items: { label: string; color: string; kind: 'bar' | 'line' }[] }) {
+/** Pairs of people whose bonus for the year has both a target and a payout. */
+function scoredRows(group: BonusYearGroup) {
+  return group.rows.filter(r => (r.bonus.target_amount ?? 0) > 0 && r.bonus.actual_amount != null)
+}
+
+/** Each performance year across everyone, newest first. */
+function groupBonusYears(earners: IncomeEarnerSeries[]): BonusYearGroup[] {
+  const byYear = new Map<number, BonusYearGroup>()
+  for (const earner of earners) {
+    for (const bonus of earner.bonus_years) {
+      let g = byYear.get(bonus.year)
+      if (!g) {
+        g = { year: bonus.year, inProgress: bonus.in_progress, rows: [], target: 0, paid: 0, attainment: null }
+        byYear.set(bonus.year, g)
+      }
+      g.rows.push({ earner, bonus })
+      g.target += bonus.target_amount ?? 0
+      g.paid += bonus.actual_amount ?? 0
+    }
+  }
+  for (const g of byYear.values()) {
+    const targeted = g.rows.filter(r => (r.bonus.target_amount ?? 0) > 0)
+    const scored = scoredRows(g)
+    if (targeted.length > 0 && scored.length === targeted.length) {
+      g.attainment = (scored.reduce((s, r) => s + (r.bonus.actual_amount ?? 0), 0) / g.target) * 100
+    }
+  }
+  return Array.from(byYear.values()).sort((a, b) => b.year - a.year)
+}
+
+/** Bar path with rounded top corners and a square base. */
+function topRoundedRect(x: number, y: number, w: number, h: number, r: number) {
+  const rr = Math.max(0, Math.min(r, w / 2, h))
+  return `M${x},${y + h} V${y + rr} Q${x},${y} ${x + rr},${y} H${x + w - rr} Q${x + w},${y} ${x + w},${y + rr} V${y + h} Z`
+}
+
+type BonusChartRow = { label: string; year: number; [key: string]: string | number | null }
+
+/** One person's bar for a year: the target as a translucent track and the paid
+ *  amount as a narrower solid bar inside it. The Bar's value is the larger of
+ *  the two, so its height gives the pixel scale for both. */
+function BonusBarShape({ x, y, width, height, payload, earnerId, color }: {
+  x: number; y: number; width: number; height: number; payload: BonusChartRow; earnerId: number; color: string
+}) {
+  const key = earnerKey(earnerId)
+  const top = Number(payload[key] ?? 0)
+  if (!top || !(height > 0)) return <g />
+  const target = Number(payload[`${key}_target`] ?? 0)
+  const paid = payload[`${key}_paid`]
+  const base = y + height
+  const px = height / top
+  const inner = Math.max(4, Math.round(width * 0.5))
+  return (
+    <g>
+      {target > 0 && (
+        <path d={topRoundedRect(x, base - target * px, width, target * px, 4)} fill={color} fillOpacity={GHOST_OPACITY} />
+      )}
+      {paid != null && Number(paid) > 0 && (
+        <path d={topRoundedRect(x + (width - inner) / 2, base - Number(paid) * px, inner, Number(paid) * px, 3)} fill={color} />
+      )}
+    </g>
+  )
+}
+
+// ─── Small pieces ─────────────────────────────────────────────────────────────
+
+type SwatchKind = 'bar' | 'line' | 'ghost'
+
+function Swatch({ color, kind = 'bar' }: { color: string; kind?: SwatchKind }) {
+  return kind === 'line'
+    ? <span className="inline-block w-4 border-t-2 shrink-0" style={{ borderColor: color }} />
+    : <span className="inline-block w-2.5 h-2.5 rounded-sm shrink-0" style={{ background: color, opacity: kind === 'ghost' ? GHOST_OPACITY : 1 }} />
+}
+
+function ChartLegend({ items }: { items: { label: string; color: string; kind: SwatchKind }[] }) {
   return (
     <div className="flex flex-wrap items-center justify-center gap-x-5 gap-y-2 text-xs text-ink-300">
       {items.map(it => (
@@ -142,7 +225,7 @@ function ChartLegend({ items }: { items: { label: string; color: string; kind: '
   )
 }
 
-function TooltipRow({ name, value, swatch, kind }: { name: string; value: string; swatch?: string; kind?: 'bar' | 'line' }) {
+function TooltipRow({ name, value, swatch, kind }: { name: string; value: string; swatch?: string; kind?: SwatchKind }) {
   return (
     <div className="flex items-center justify-between gap-6">
       <span className="inline-flex items-center gap-2 text-ink-300">
@@ -179,6 +262,53 @@ function GrossTooltip({
       )}
       {rate != null && <TooltipRow name="Take-home rate" value={formatPercent(rate)} />}
     </div>
+  )
+}
+
+function bonusSummary(target: number | null, paid: number | null, attainment: number | null): string {
+  if (paid == null) return target ? `${formatCurrencyWhole(target)} target` : '—'
+  if (!target || attainment == null) return `${formatCurrencyWhole(paid)} paid`
+  return `${formatCurrencyWhole(paid)} of ${formatCurrencyWhole(target)} · ${formatPercent(attainment, 0)}`
+}
+
+function BonusTooltip({
+  active, payload, label, groups, colors,
+}: TooltipProps<number, string> & { groups: Map<number, BonusYearGroup>; colors: Map<number, string> }) {
+  if (!active || !payload?.length) return null
+  const group = groups.get((payload[0].payload as BonusChartRow).year)
+  if (!group) return null
+  return (
+    <div style={TOOLTIP_STYLE} className="px-3 py-2 space-y-1 min-w-[260px]">
+      <div className="text-ink-100 mb-1">
+        {label} bonus{group.inProgress && <span className="text-ink-400"> · year in progress</span>}
+      </div>
+      {group.rows.map(({ earner, bonus }) => (
+        <TooltipRow
+          key={earner.earner_id}
+          name={earner.name}
+          value={bonusSummary(bonus.target_amount, bonus.actual_amount, bonus.attainment_pct)}
+          swatch={colors.get(earner.earner_id)}
+        />
+      ))}
+      {group.rows.length > 1 && (
+        <TooltipRow
+          name="Household"
+          value={bonusSummary(group.target || null, group.paid || null, group.attainment)}
+        />
+      )}
+    </div>
+  )
+}
+
+function AttainmentCell({ value, padding = 'py-2' }: { value: number | null; padding?: string }) {
+  return (
+    <td className={clsx(
+      padding,
+      'text-right font-mono tabular-nums whitespace-nowrap',
+      value == null ? 'text-ink-400' : value >= 100 ? 'text-teal-400' : 'text-rose-400',
+    )}>
+      {value == null ? '—' : formatPercent(value, 0)}
+    </td>
   )
 }
 
@@ -219,6 +349,7 @@ export default function IncomePage() {
   const [personFilter, setPersonFilter] = useState<number | null>(null)
   const [editing, setEditing] = useState<IncomeEntry | 'new' | null>(null)
   const [showPeople, setShowPeople] = useState(false)
+  const [salaryView, setSalaryView] = useState<'base' | 'total'>('base')
 
   const { data: earners, isLoading: earnersLoading } = useEarners()
   const { data: entries } = useIncomeEntries()
@@ -307,14 +438,49 @@ export default function IncomePage() {
 
   const yearRows = report ? buildBuckets(report, 'year', anchor) : []
 
-  // Salary steps are monthly regardless of the bucket toggle.
+  // ── Annual bonus ──
+  const householdTargetBonus = report?.current_household_target_bonus ?? 0
+  const bonusGroups = groupBonusYears(seriesEarners)
+  const bonusGroupsByYear = new Map(bonusGroups.map(g => [g.year, g]))
+  // Headline: the newest finished year with a payout to score against a target.
+  const latestScored = bonusGroups.find(g => !g.inProgress && scoredRows(g).length > 0)
+  const latestScoredTarget = latestScored
+    ? scoredRows(latestScored).reduce((s, r) => s + (r.bonus.target_amount ?? 0), 0)
+    : 0
+  const latestScoredPaid = latestScored
+    ? scoredRows(latestScored).reduce((s, r) => s + (r.bonus.actual_amount ?? 0), 0)
+    : 0
+  const latestAttainment = latestScoredTarget > 0 ? (latestScoredPaid / latestScoredTarget) * 100 : null
+  const bonusEarners = seriesEarners.filter(e => e.bonus_years.length > 0)
+  const bonusChartData: BonusChartRow[] = [...bonusGroups].reverse().map(g => {
+    const row: BonusChartRow = { label: String(g.year), year: g.year }
+    for (const { earner, bonus } of g.rows) {
+      const key = earnerKey(earner.earner_id)
+      row[key] = Math.max(bonus.target_amount ?? 0, bonus.actual_amount ?? 0)
+      row[`${key}_target`] = bonus.target_amount
+      row[`${key}_paid`] = bonus.actual_amount
+    }
+    return row
+  })
+  const bonusBarSize = Math.max(
+    6,
+    Math.min(28, Math.floor(560 / Math.max(1, bonusChartData.length * Math.max(1, bonusEarners.length)))),
+  )
+
+  // Salary steps are monthly regardless of the bucket toggle. "Total" adds
+  // each month's target bonus on top of base (target total comp).
+  const hasTargets = seriesEarners.some(e => e.monthly_target_bonus_pct.some(p => (p ?? 0) > 0))
+  const showTotalComp = hasTargets && salaryView === 'total'
   const salaryRowsAll = report
     ? report.months.map((_, i) => {
         const row: Record<string, string | number | null> = { label: report.month_labels[i] }
         let total = 0
         let any = false
         for (const e of report.earners) {
-          const rate = e.monthly_salary_rate[i]
+          const base = e.monthly_salary_rate[i]
+          const rate = base != null && showTotalComp
+            ? round2(base * (1 + (e.monthly_target_bonus_pct[i] ?? 0) / 100))
+            : base
           row[earnerKey(e.earner_id)] = rate
           if (rate != null) { total += rate; any = true }
         }
@@ -404,7 +570,7 @@ export default function IncomePage() {
           </div>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div className={clsx('grid grid-cols-1 gap-4', bonusGroups.length > 0 ? 'md:grid-cols-2 xl:grid-cols-4' : 'md:grid-cols-3')}>
           <Card padding={false} className="p-4">
             <div className="label text-ink-200">Household Salary</div>
             <div className="font-mono text-xl mt-2 text-ink-100">
@@ -416,6 +582,15 @@ export default function IncomePage() {
                 ? seriesEarners.map(e => `${e.name} ${formatCurrencyCompact(e.current_salary)}`).join(' · ')
                 : 'current base pay, before bonuses'}
             </div>
+            {householdTargetBonus > 0 && (
+              <div className="text-xs text-ink-300 mt-0.5 truncate">
+                + {formatCurrencyWhole(householdTargetBonus)} target bonus ={' '}
+                <span className="text-ink-100">
+                  {formatCurrencyWhole((report?.current_household_salary ?? 0) + householdTargetBonus)}
+                </span>{' '}
+                target comp
+              </div>
+            )}
           </Card>
           <Card padding={false} className="p-4">
             <div className="label text-ink-200">Gross, Last 12 Months</div>
@@ -447,6 +622,19 @@ export default function IncomePage() {
               </div>
             )}
           </Card>
+          {bonusGroups.length > 0 && (
+            <Card padding={false} className="p-4">
+              <div className="label text-ink-200">Bonus vs Target</div>
+              <div className="font-mono text-xl mt-2 text-ink-100">
+                {latestAttainment != null ? formatPercent(latestAttainment, 0) : '—'}
+              </div>
+              <div className="text-xs text-ink-300 mt-1 truncate">
+                {latestScored
+                  ? `${latestScored.year}: ${formatCurrencyWhole(latestScoredPaid)} paid of ${formatCurrencyWhole(latestScoredTarget)} target`
+                  : 'No annual bonus paid against a target yet'}
+              </div>
+            </Card>
+          )}
         </div>
 
         <Card>
@@ -580,9 +768,143 @@ export default function IncomePage() {
           </Card>
         )}
 
+        {bonusGroups.length > 0 && (
+          <Card>
+            <h4 className="label mb-4">Annual Bonus: Target vs Actual</h4>
+            <div className={clsx('space-y-4 transition-opacity', isFetching && 'opacity-60')}>
+              <div style={{ height: 260 }}>
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={bonusChartData} margin={{ top: 8, right: 16, bottom: 0, left: 8 }} barGap={4}>
+                    <CartesianGrid vertical={false} stroke="rgba(255,255,255,0.04)" />
+                    <XAxis dataKey="label" tick={AXIS_TICK} axisLine={{ stroke: 'rgba(255,255,255,0.08)' }} tickLine={false} />
+                    <YAxis tick={AXIS_TICK} axisLine={false} tickLine={false} tickFormatter={(v: number) => formatCurrencyCompact(v)} />
+                    <Tooltip
+                      cursor={{ fill: 'rgba(255,255,255,0.03)' }}
+                      content={<BonusTooltip groups={bonusGroupsByYear} colors={colors} />}
+                    />
+                    {bonusEarners.map(e => (
+                      <Bar
+                        key={e.earner_id}
+                        dataKey={earnerKey(e.earner_id)}
+                        name={e.name}
+                        fill={colors.get(e.earner_id)}
+                        barSize={bonusBarSize}
+                        isAnimationActive={false}
+                        shape={(props: unknown) => (
+                          <BonusBarShape
+                            {...(props as { x: number; y: number; width: number; height: number; payload: BonusChartRow })}
+                            earnerId={e.earner_id}
+                            color={colors.get(e.earner_id) ?? OVERFLOW_COLOR}
+                          />
+                        )}
+                      />
+                    ))}
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+              <ChartLegend
+                items={[
+                  ...(bonusEarners.length > 1
+                    ? bonusEarners.map(e => ({ label: e.name, color: colors.get(e.earner_id) ?? OVERFLOW_COLOR, kind: 'bar' as const }))
+                    : []),
+                  { label: 'Target', color: HOUSEHOLD_COLOR, kind: 'ghost' as const },
+                  { label: 'Paid', color: HOUSEHOLD_COLOR, kind: 'bar' as const },
+                ]}
+              />
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="text-left text-2xs uppercase tracking-wider text-ink-400 border-b border-white/[0.06]">
+                      <th className="py-2 pr-3 font-medium whitespace-nowrap">Performance year</th>
+                      {bonusEarners.length > 1 && <th className="py-2 pr-3 font-medium">Person</th>}
+                      <th className="py-2 pr-3 font-medium text-right whitespace-nowrap">Year-end base</th>
+                      <th className="py-2 pr-3 font-medium text-right whitespace-nowrap">Target %</th>
+                      <th className="py-2 pr-3 font-medium text-right">Target</th>
+                      <th className="py-2 pr-3 font-medium text-right">Paid</th>
+                      <th className="py-2 font-medium text-right whitespace-nowrap">% of target</th>
+                    </tr>
+                  </thead>
+                  {bonusGroups.map(g => (
+                    <tbody key={g.year} className="border-b border-white/[0.06] last:border-0">
+                      {g.rows.map(({ earner, bonus }, i) => (
+                        <tr key={earner.earner_id}>
+                          <td className="py-2 pr-3 text-ink-100 whitespace-nowrap">
+                            {i === 0 && (
+                              <>
+                                {g.year}
+                                {g.inProgress && <span className="text-ink-400 text-xs"> · in progress</span>}
+                              </>
+                            )}
+                          </td>
+                          {bonusEarners.length > 1 && (
+                            <td className="py-2 pr-3 text-ink-200 whitespace-nowrap">
+                              <span className="inline-flex items-center gap-2">
+                                <Swatch color={colors.get(earner.earner_id) ?? OVERFLOW_COLOR} />
+                                {earner.name}
+                              </span>
+                            </td>
+                          )}
+                          <td className="py-2 pr-3 text-right font-mono tabular-nums text-ink-200">
+                            {bonus.base_salary != null ? formatCurrencyWhole(bonus.base_salary) : '—'}
+                          </td>
+                          <td className="py-2 pr-3 text-right font-mono tabular-nums text-ink-200">
+                            {bonus.target_pct ? pctLabel(bonus.target_pct) : '—'}
+                          </td>
+                          <td className="py-2 pr-3 text-right font-mono tabular-nums text-ink-200">
+                            {bonus.target_amount ? formatCurrencyWhole(bonus.target_amount) : '—'}
+                          </td>
+                          <td className={clsx(
+                            'py-2 pr-3 text-right whitespace-nowrap',
+                            bonus.actual_amount != null ? 'font-mono tabular-nums text-ink-100' : 'text-xs text-ink-400'
+                          )}>
+                            {bonus.actual_amount != null
+                              ? formatCurrencyWhole(bonus.actual_amount)
+                              : g.inProgress ? 'Expected' : 'Not entered'}
+                          </td>
+                          <AttainmentCell value={bonus.attainment_pct} />
+                        </tr>
+                      ))}
+                      {g.rows.length > 1 && (
+                        <tr className="text-ink-100">
+                          <td className="pb-2.5 pr-3" />
+                          {bonusEarners.length > 1 && <td className="pb-2.5 pr-3 text-ink-300">Household</td>}
+                          <td className="pb-2.5 pr-3" />
+                          <td className="pb-2.5 pr-3" />
+                          <td className="pb-2.5 pr-3 text-right font-mono tabular-nums">
+                            {g.target ? formatCurrencyWhole(g.target) : '—'}
+                          </td>
+                          <td className="pb-2.5 pr-3 text-right font-mono tabular-nums">
+                            {g.paid ? formatCurrencyWhole(g.paid) : '—'}
+                          </td>
+                          <AttainmentCell value={g.attainment} padding="pb-2.5" />
+                        </tr>
+                      )}
+                    </tbody>
+                  ))}
+                </table>
+              </div>
+              <p className="text-2xs text-ink-400 text-center max-w-2xl mx-auto">
+                Target is the bonus % on the salary in effect on Dec 31, times that base. Annual bonuses count toward
+                the performance year they're for, wherever they were paid; gross charts above count them in the month paid.
+              </p>
+            </div>
+          </Card>
+        )}
+
         {salaryData.length > 0 && (
           <Card>
-            <h4 className="label mb-4">Salary History (Annual Base)</h4>
+            <div className="flex flex-wrap items-center justify-between gap-2 mb-4">
+              <h4 className="label">
+                {showTotalComp ? 'Target Total Comp (Base + Target Bonus)' : 'Salary History (Annual Base)'}
+              </h4>
+              {hasTargets && (
+                <SegmentedControl<'base' | 'total'>
+                  options={[{ value: 'base', label: 'Base' }, { value: 'total', label: 'Base + target bonus' }]}
+                  value={salaryView}
+                  onChange={setSalaryView}
+                />
+              )}
+            </div>
             <div className={clsx('space-y-4 transition-opacity', isFetching && 'opacity-60')}>
               <div style={{ height: 280 }}>
                 <ResponsiveContainer width="100%" height="100%">
@@ -700,10 +1022,18 @@ export default function IncomePage() {
                             {entry.earner_name}
                           </span>
                         </td>
-                        <td className="py-2.5 pr-3 text-ink-200 whitespace-nowrap">{KIND_LABELS[entry.kind]}</td>
+                        <td className="py-2.5 pr-3 text-ink-200 whitespace-nowrap">
+                          {KIND_LABELS[entry.kind]}
+                          {entry.kind === 'bonus' && entry.bonus_year != null && (
+                            <span className="text-ink-400"> · {entry.bonus_year}</span>
+                          )}
+                        </td>
                         <td className="py-2.5 pr-3 text-right font-mono tabular-nums text-ink-100 whitespace-nowrap">
                           {formatCurrencyWhole(entry.amount)}
                           {entry.kind === 'salary' && <span className="text-ink-400">/yr</span>}
+                          {entry.kind === 'salary' && (entry.target_bonus_pct ?? 0) > 0 && (
+                            <span className="text-ink-400"> · {pctLabel(entry.target_bonus_pct ?? 0)} bonus</span>
+                          )}
                         </td>
                         <td className={clsx(
                           'py-2.5 pr-3 text-right font-mono tabular-nums whitespace-nowrap',
@@ -752,9 +1082,16 @@ function IncomeEntryModal({ entry, earners, entries, defaultEarnerId, onClose }:
   const updateEntry = useUpdateIncomeEntry()
   const deleteEntry = useDeleteIncomeEntry()
 
-  // A new entry usually continues at the person's latest employer.
+  // A new entry usually continues at the person's latest employer, and a
+  // raise usually keeps the same bonus target. `entries` is newest first.
   const latestEmployer = (earnerId: number) =>
     entries.find(e => e.earner_id === earnerId && e.employer)?.employer ?? ''
+  const latestTargetPct = (earnerId: number) => {
+    const pct = entries.find(e => e.earner_id === earnerId && e.kind === 'salary')?.target_bonus_pct
+    return pct ? String(pct) : ''
+  }
+  // Annual bonuses pay out the year after they're earned.
+  const defaultBonusYear = (paid: string) => (paid ? String(Number(paid.slice(0, 4)) - 1) : '')
 
   const [earnerId, setEarnerId] = useState(entry?.earner_id ?? defaultEarnerId)
   const [kind, setKind] = useState<IncomeKind>(entry?.kind ?? 'salary')
@@ -762,10 +1099,36 @@ function IncomeEntryModal({ entry, earners, entries, defaultEarnerId, onClose }:
   const [amount, setAmount] = useState(entry ? String(entry.amount) : '')
   const [employer, setEmployer] = useState(entry ? entry.employer ?? '' : latestEmployer(defaultEarnerId))
   const [employerTouched, setEmployerTouched] = useState(false)
+  const [targetPct, setTargetPct] = useState(
+    entry ? (entry.target_bonus_pct ? String(entry.target_bonus_pct) : '') : latestTargetPct(defaultEarnerId)
+  )
+  const [targetTouched, setTargetTouched] = useState(false)
+  const [bonusYear, setBonusYear] = useState(
+    entry?.bonus_year != null ? String(entry.bonus_year) : defaultBonusYear(entry?.effective_date ?? todayLocal())
+  )
+  // An existing bonus keeps its year; otherwise the year follows the paid date.
+  const [bonusYearTouched, setBonusYearTouched] = useState(entry?.bonus_year != null)
   const [notes, setNotes] = useState(entry?.notes ?? '')
   const [error, setError] = useState('')
 
   const busy = createEntry.isPending || updateEntry.isPending || deleteEntry.isPending
+
+  // Live target context for the form: the salary amount × % for a salary,
+  // and that performance year's target for an annual bonus.
+  const amountValue = amount.trim() === '' ? null : Number(amount)
+  const pctValue = targetPct.trim() === '' ? null : Number(targetPct)
+  const salaryTarget = amountValue != null && pctValue != null && Number.isFinite(amountValue * pctValue)
+    ? amountValue * pctValue / 100
+    : null
+  const bonusTarget = (() => {
+    const year = Number(bonusYear)
+    if (kind !== 'bonus' || !Number.isInteger(year)) return null
+    const yearEnd = `${year}-12-31`
+    const salary = entries
+      .filter(e => e.earner_id === earnerId && e.kind === 'salary' && e.id !== entry?.id && e.effective_date <= yearEnd)
+      .sort((a, b) => b.effective_date.localeCompare(a.effective_date))[0]
+    return { year, salary, target: salary ? salary.amount * (salary.target_bonus_pct ?? 0) / 100 : 0 }
+  })()
 
   const submit = (e: FormEvent) => {
     e.preventDefault()
@@ -778,6 +1141,15 @@ function IncomeEntryModal({ entry, earners, entries, defaultEarnerId, onClose }:
       setError('Pick a date.')
       return
     }
+    if (kind === 'salary' && pctValue != null && !(Number.isFinite(pctValue) && pctValue >= 0 && pctValue <= 1000)) {
+      setError('Enter a target bonus % between 0 and 1000, or leave it blank.')
+      return
+    }
+    const year = Number(bonusYear)
+    if (kind === 'bonus' && !(Number.isInteger(year) && year >= 1900 && year <= 2200)) {
+      setError('Enter the performance year this bonus is for.')
+      return
+    }
     setError('')
     const data = {
       earner_id: earnerId,
@@ -786,6 +1158,8 @@ function IncomeEntryModal({ entry, earners, entries, defaultEarnerId, onClose }:
       amount: value,
       employer: employer.trim() || null,
       notes: notes.trim() || null,
+      target_bonus_pct: kind === 'salary' ? pctValue : null,
+      bonus_year: kind === 'bonus' ? year : null,
     }
     if (entry) updateEntry.mutate({ id: entry.id, data }, { onSuccess: onClose })
     else createEntry.mutate(data, { onSuccess: onClose })
@@ -810,6 +1184,7 @@ function IncomeEntryModal({ entry, earners, entries, defaultEarnerId, onClose }:
                 const id = Number(e.target.value)
                 setEarnerId(id)
                 if (!entry && !employerTouched) setEmployer(latestEmployer(id))
+                if (!entry && !targetTouched) setTargetPct(latestTargetPct(id))
               }}
               className={INPUT_CLASS}
             >
@@ -829,7 +1204,15 @@ function IncomeEntryModal({ entry, earners, entries, defaultEarnerId, onClose }:
         <div className="grid grid-cols-2 gap-3">
           <div>
             <label className="label block mb-1.5">{kind === 'salary' ? 'Effective date' : 'Date paid'}</label>
-            <input type="date" value={date} onChange={e => setDate(e.target.value)} className={INPUT_CLASS} />
+            <input
+              type="date"
+              value={date}
+              onChange={e => {
+                setDate(e.target.value)
+                if (!bonusYearTouched) setBonusYear(defaultBonusYear(e.target.value))
+              }}
+              className={INPUT_CLASS}
+            />
           </div>
           <div>
             <label className="label block mb-1.5">{kind === 'salary' ? 'Annual salary' : 'Gross amount'}</label>
@@ -847,8 +1230,79 @@ function IncomeEntryModal({ entry, earners, entries, defaultEarnerId, onClose }:
         <p className="text-2xs text-ink-400 -mt-2">
           {kind === 'salary'
             ? 'Gross base pay per year, in effect from this date until the next salary change. Enter 0 if this person stopped working.'
-            : 'One-time gross amount (before taxes), counted in the month it was paid.'}
+            : kind === 'bonus'
+              ? 'Gross annual performance bonus (before taxes). Counts in gross income the month it was paid, and against the target for its performance year.'
+              : 'One-time gross amount (before taxes), counted in the month it was paid.'}
         </p>
+
+        {kind === 'salary' && (
+          <div>
+            <div className="grid grid-cols-2 gap-3 items-end">
+              <div>
+                <label className="label block mb-1.5">Target bonus %</label>
+                <input
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  value={targetPct}
+                  onChange={e => { setTargetPct(e.target.value); setTargetTouched(true) }}
+                  placeholder="None"
+                  className={INPUT_CLASS}
+                />
+              </div>
+              <div className="pb-2 text-xs text-ink-300">
+                {salaryTarget != null && salaryTarget > 0 && (
+                  <>= <span className="font-mono text-ink-100">{formatCurrencyWhole(salaryTarget)}</span> target bonus/yr</>
+                )}
+              </div>
+            </div>
+            <p className="text-2xs text-ink-400 mt-1.5">
+              Annual bonus target as a % of base. A year's target is this % of the base in effect on Dec 31.
+              Leave blank if there's no bonus plan.
+            </p>
+          </div>
+        )}
+
+        {kind === 'bonus' && (
+          <div>
+            <div className="grid grid-cols-2 gap-3 items-end">
+              <div>
+                <label className="label block mb-1.5">Performance year</label>
+                <input
+                  type="number"
+                  step="1"
+                  value={bonusYear}
+                  onChange={e => { setBonusYear(e.target.value); setBonusYearTouched(true) }}
+                  className={INPUT_CLASS}
+                />
+              </div>
+            </div>
+            {bonusTarget && (
+              <p className="text-xs text-ink-300 mt-1.5">
+                {bonusTarget.target > 0 && bonusTarget.salary ? (
+                  <>
+                    {bonusTarget.year} target:{' '}
+                    <span className="font-mono text-ink-100">{formatCurrencyWhole(bonusTarget.target)}</span>
+                    {' '}({pctLabel(bonusTarget.salary.target_bonus_pct ?? 0)} of {formatCurrencyWhole(bonusTarget.salary.amount)})
+                    {amountValue != null && Number.isFinite(amountValue) && amountValue > 0 && (
+                      <>
+                        {' · '}
+                        <span className={amountValue >= bonusTarget.target ? 'text-teal-400' : 'text-rose-400'}>
+                          {formatPercent((amountValue / bonusTarget.target) * 100, 0)} of target
+                        </span>
+                      </>
+                    )}
+                  </>
+                ) : (
+                  <span className="text-ink-400">
+                    No target bonus % on {earners.find(p => p.id === earnerId)?.name ?? 'this person'}'s salary at the end
+                    of {bonusTarget.year}. Add one to a salary entry to compare.
+                  </span>
+                )}
+              </p>
+            )}
+          </div>
+        )}
 
         <div>
           <label className="label block mb-1.5">Employer</label>
