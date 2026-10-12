@@ -576,7 +576,7 @@ export default function IncomePage() {
               {formatCurrencyWhole(householdBaseSalary + householdTargetBonus)}
               <span className="text-ink-300 text-xs font-normal ml-1">/yr</span>
             </div>
-            <div className="text-xs text-ink-400 mt-1 truncate">
+            <div className="text-xs text-ink-300 mt-1 truncate">
               {formatCurrencyWhole(householdBaseSalary)} base salary
             </div>
           </Card>
@@ -627,7 +627,7 @@ export default function IncomePage() {
 
         <Card>
           <div className="flex flex-wrap items-center justify-between gap-2 mb-4">
-            <h4 className="label">Gross vs. Take-Home</h4>
+            <h4 className="label text-ink-200">Gross vs. Take-Home</h4>
             <SegmentedControl<'chart' | 'table'>
               options={[{ value: 'chart', label: 'Chart' }, { value: 'table', label: 'Table' }]}
               value={grossView}
@@ -764,7 +764,7 @@ export default function IncomePage() {
 
         {bonusGroups.length > 0 && (
           <Card>
-            <h4 className="label mb-4">Annual Bonus: Target vs Actual</h4>
+            <h4 className="label text-ink-200 mb-4">Annual Bonus: Target vs Actual</h4>
             <div className={clsx('space-y-4 transition-opacity', isFetching && 'opacity-60')}>
               <div style={{ height: 260 }}>
                 <ResponsiveContainer width="100%" height="100%">
@@ -888,7 +888,7 @@ export default function IncomePage() {
         {salaryData.length > 0 && (
           <Card>
             <div className="flex flex-wrap items-center justify-between gap-2 mb-4">
-              <h4 className="label">
+              <h4 className="label text-ink-200">
                 {showTotalComp ? 'Target Total Comp (Base + Target Bonus)' : 'Salary History (Annual Base)'}
               </h4>
               {hasTargets && (
@@ -960,7 +960,7 @@ export default function IncomePage() {
 
         <Card>
           <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
-            <h4 className="label">Income History</h4>
+            <h4 className="label text-ink-200">Income History</h4>
             {earners.length > 1 && (
               <div className="flex flex-wrap gap-1.5">
                 {[{ id: null as number | null, name: 'Everyone' }, ...earners.map(e => ({ id: e.id as number | null, name: e.name }))].map(p => (
