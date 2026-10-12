@@ -133,7 +133,7 @@ def test_take_home_matches_cash_flow_income_for_salary_category(db):
     assert _year_report(db, 2024, take_home_category_ids=[]).monthly_take_home == [0.0] * 12
 
 
-def test_default_take_home_category_is_salary_and_wages(db):
+def test_default_take_home_categories_are_salary_and_bonus(db):
     income_parent = Category(name="Income", is_income=True)
     db.add(income_parent)
     db.flush()
@@ -142,7 +142,14 @@ def test_default_take_home_category_is_salary_and_wages(db):
     db.add_all([salary, other])
     db.commit()
 
+    # Without a Bonus category, the default is Salary & Wages alone.
     assert resolve_take_home_category_ids(db, None) == [salary.id]
+
+    bonus = Category(name="Bonus", is_income=True, parent_id=income_parent.id)
+    db.add(bonus)
+    db.commit()
+
+    assert resolve_take_home_category_ids(db, None) == [salary.id, bonus.id]
     assert resolve_take_home_category_ids(db, [other.id]) == [other.id]
 
 

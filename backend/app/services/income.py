@@ -33,9 +33,11 @@ from app.services.reporting import (
     _short_month_label,
 )
 
-# Seeded system category that paycheck deposits are filed under; the
-# default take-home source when the caller doesn't pick categories.
-DEFAULT_TAKE_HOME_CATEGORY = "Salary & Wages"
+# Income categories that paycheck and bonus deposits are filed under; the
+# default take-home source when the caller doesn't pick categories. Gross
+# counts bonuses, so take-home does too. "Bonus" isn't seeded, so it only
+# applies where the user has created it.
+DEFAULT_TAKE_HOME_CATEGORIES = ("Salary & Wages", "Bonus")
 
 MAX_MONTHS = 600
 
@@ -115,12 +117,14 @@ def _prorated_month_salary(salary_entries: list[IncomeEntry], year: int, month: 
 
 def resolve_take_home_category_ids(db: Session, ids: Optional[list[int]]) -> list[int]:
     """The categories whose net deposits count as take-home pay: the caller's
-    pick if given (possibly empty), else the 'Salary & Wages' category."""
+    pick if given (possibly empty), else the 'Salary & Wages' and 'Bonus'
+    categories (whichever exist)."""
     if ids is not None:
         return ids
     rows = (
         db.query(Category.id)
-        .filter(Category.is_income == True, Category.name == DEFAULT_TAKE_HOME_CATEGORY)
+        .filter(Category.is_income == True, Category.name.in_(DEFAULT_TAKE_HOME_CATEGORIES))
+        .order_by(Category.id)
         .all()
     )
     return [r.id for r in rows]

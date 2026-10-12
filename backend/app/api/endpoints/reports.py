@@ -240,7 +240,7 @@ def get_income_report(
     take_home_category_ids: Optional[str] = Query(
         None,
         description="Comma-separated income category IDs whose deposits count as take-home pay. "
-                    "Omit for 'Salary & Wages'; pass an empty value for none.",
+                    "Omit for 'Salary & Wages' and 'Bonus'; pass an empty value for none.",
     ),
     db: Session = Depends(get_db),
 ):

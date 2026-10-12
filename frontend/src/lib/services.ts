@@ -233,7 +233,7 @@ export const reportsApi = {
   subscriptions: (params?: { months?: number; account_ids?: string }) =>
     apiClient.get<SubscriptionsReport>('/reports/subscriptions', { params }).then(r => r.data),
 
-  // takeHomeCategoryIds: undefined = server default ('Salary & Wages'); [] = none.
+  // takeHomeCategoryIds: undefined = server default ('Salary & Wages' + 'Bonus'); [] = none.
   income: (params: { months?: number; year?: number; month?: number; takeHomeCategoryIds?: number[] }) =>
     apiClient.get<IncomeReport>('/reports/income', {
       params: {
