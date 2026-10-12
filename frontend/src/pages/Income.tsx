@@ -435,7 +435,8 @@ export default function IncomePage() {
     takeHome: hasTakeHome ? round2(b.takeHome) : null,
     ...Object.fromEntries(seriesEarners.map(e => [earnerKey(e.earner_id), round2(b.byEarner[e.earner_id] ?? 0)])),
   }))
-  const barSize = chartData.length <= 12 ? 28 : chartData.length <= 24 ? 18 : chartData.length <= 60 ? 8 : 4
+  // Sized for the half-width chart (it sits beside the salary chart on wide screens).
+  const barSize = chartData.length <= 12 ? 28 : chartData.length <= 24 ? 14 : chartData.length <= 60 ? 6 : 3
   const showDots = chartData.length <= 24
 
   const yearRows = report ? buildBuckets(report, 'year', anchor) : []
@@ -445,15 +446,6 @@ export default function IncomePage() {
   const householdTargetBonus = report?.current_household_target_bonus ?? 0
   const bonusGroups = groupBonusYears(seriesEarners)
   const bonusGroupsByYear = new Map(bonusGroups.map(g => [g.year, g]))
-  // Headline: the newest finished year with a payout to score against a target.
-  const latestScored = bonusGroups.find(g => !g.inProgress && scoredRows(g).length > 0)
-  const latestScoredTarget = latestScored
-    ? scoredRows(latestScored).reduce((s, r) => s + (r.bonus.target_amount ?? 0), 0)
-    : 0
-  const latestScoredPaid = latestScored
-    ? scoredRows(latestScored).reduce((s, r) => s + (r.bonus.actual_amount ?? 0), 0)
-    : 0
-  const latestAttainment = latestScoredTarget > 0 ? (latestScoredPaid / latestScoredTarget) * 100 : null
   const bonusEarners = seriesEarners.filter(e => e.bonus_years.length > 0)
   const bonusChartData: BonusChartRow[] = [...bonusGroups].reverse().map(g => {
     const row: BonusChartRow = { label: String(g.year), year: g.year }
@@ -591,7 +583,7 @@ export default function IncomePage() {
           </div>
         </div>
 
-        <div className={clsx('grid grid-cols-1 gap-4', bonusGroups.length > 0 ? 'md:grid-cols-2 xl:grid-cols-4' : 'md:grid-cols-3')}>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           <Card padding={false} className="p-4">
             <div className="label text-ink-200">Household Salary</div>
             <div className="font-mono text-xl mt-2 text-ink-100">
@@ -633,157 +625,242 @@ export default function IncomePage() {
               </div>
             )}
           </Card>
-          {bonusGroups.length > 0 && (
-            <Card padding={false} className="p-4">
-              <div className="label text-ink-200">Bonus vs Target</div>
-              <div className="font-mono text-xl mt-2 text-ink-100">
-                {latestAttainment != null ? formatPercent(latestAttainment, 0) : '—'}
+        </div>
+
+        <div className={clsx('grid grid-cols-1 gap-4', salaryData.length > 0 && 'xl:grid-cols-2')}>
+          <Card className="min-w-0">
+            <div className="flex flex-wrap items-center justify-between gap-2 mb-4">
+              <h4 className="label text-ink-200">Gross vs. Take-Home</h4>
+              <SegmentedControl<'chart' | 'table'>
+                options={[{ value: 'chart', label: 'Chart' }, { value: 'table', label: 'Table' }]}
+                value={grossView}
+                onChange={setGrossView}
+              />
+            </div>
+            {chartData.length === 0 ? (
+              <div className="h-[220px] flex items-center justify-center text-ink-400 text-sm">
+                No income recorded in this range yet. Add a salary entry to get started.
               </div>
-              <div className="text-xs text-ink-300 mt-1 truncate">
-                {latestScored
-                  ? `${latestScored.year}: ${formatCurrencyWhole(latestScoredPaid)} paid of ${formatCurrencyWhole(latestScoredTarget)} target`
-                  : 'No annual bonus paid against a target yet'}
+            ) : (
+              <div className={clsx('space-y-4 transition-opacity', isFetching && 'opacity-60')}>
+                {grossView === 'chart' ? (
+                  <>
+                    <div style={{ height: 340 }}>
+                      <ResponsiveContainer width="100%" height="100%">
+                        <ComposedChart data={chartData} margin={{ top: 8, right: 16, bottom: 0, left: 8 }}>
+                          <CartesianGrid vertical={false} stroke="rgba(255,255,255,0.04)" />
+                          <XAxis
+                            dataKey="label"
+                            tick={AXIS_TICK}
+                            axisLine={{ stroke: 'rgba(255,255,255,0.08)' }}
+                            tickLine={false}
+                            interval="preserveStartEnd"
+                            minTickGap={16}
+                          />
+                          <YAxis tick={AXIS_TICK} axisLine={false} tickLine={false} tickFormatter={(v: number) => formatCurrencyCompact(v)} />
+                          <Tooltip
+                            cursor={{ fill: 'rgba(255,255,255,0.03)' }}
+                            content={<GrossTooltip earners={seriesEarners} colors={colors} />}
+                          />
+                          {seriesEarners.map((e, i) => (
+                            <Bar
+                              key={e.earner_id}
+                              dataKey={earnerKey(e.earner_id)}
+                              name={e.name}
+                              stackId="gross"
+                              fill={colors.get(e.earner_id)}
+                              // A surface-colored stroke leaves a gap between stacked segments.
+                              stroke={SURFACE_COLOR}
+                              strokeWidth={2}
+                              radius={i === seriesEarners.length - 1 ? [4, 4, 0, 0] : 0}
+                              barSize={barSize}
+                              isAnimationActive={false}
+                            />
+                          ))}
+                          {hasTakeHome && (
+                            <Line
+                              dataKey="takeHome"
+                              name="Take-home"
+                              type="monotone"
+                              stroke={TAKE_HOME_COLOR}
+                              strokeWidth={2}
+                              dot={showDots ? { r: 4, fill: TAKE_HOME_COLOR, stroke: SURFACE_COLOR, strokeWidth: 2 } : false}
+                              activeDot={{ r: 5, fill: TAKE_HOME_COLOR, stroke: SURFACE_COLOR, strokeWidth: 2 }}
+                              isAnimationActive={false}
+                            />
+                          )}
+                        </ComposedChart>
+                      </ResponsiveContainer>
+                    </div>
+                    <ChartLegend
+                      items={[
+                        ...seriesEarners.map(e => ({ label: `${e.name} gross`, color: colors.get(e.earner_id) ?? OVERFLOW_COLOR, kind: 'bar' as const })),
+                        ...(hasTakeHome ? [{ label: 'Take-home', color: TAKE_HOME_COLOR, kind: 'line' as const }] : []),
+                      ]}
+                    />
+                  </>
+                ) : (
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="text-left text-2xs uppercase tracking-wider text-ink-300 border-b border-white/[0.06]">
+                          <th className="py-2 pr-3 font-medium">Year</th>
+                          {seriesEarners.length > 1 && seriesEarners.map(e => (
+                            <th key={e.earner_id} className="py-2 pr-3 font-medium text-right whitespace-nowrap">{e.name}</th>
+                          ))}
+                          <th className="py-2 pr-3 font-medium text-right whitespace-nowrap">
+                            {seriesEarners.length > 1 ? 'Household gross' : 'Gross'}
+                          </th>
+                          <th className="py-2 pr-3 font-medium text-right whitespace-nowrap">vs prior year</th>
+                          {hasTakeHome && <th className="py-2 pr-3 font-medium text-right whitespace-nowrap">Take-home</th>}
+                          {hasTakeHome && <th className="py-2 font-medium text-right whitespace-nowrap">Rate</th>}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {[...yearRows].reverse().map(row => {
+                          const prev = yearRows[yearRows.indexOf(row) - 1]
+                          const change = !row.partial && prev && prev.household > 0
+                            ? ((row.household - prev.household) / prev.household) * 100
+                            : null
+                          const rate = row.household > 0 ? (row.takeHome / row.household) * 100 : null
+                          return (
+                            <tr key={row.key} className="border-b border-white/[0.04] last:border-0">
+                              <td className="py-2.5 pr-3 text-ink-100 whitespace-nowrap">{row.label}</td>
+                              {seriesEarners.length > 1 && seriesEarners.map(e => (
+                                <td key={e.earner_id} className="py-2.5 pr-3 text-right font-mono tabular-nums text-ink-200">
+                                  {formatCurrencyWhole(row.byEarner[e.earner_id] ?? 0)}
+                                </td>
+                              ))}
+                              <td className="py-2.5 pr-3 text-right font-mono tabular-nums text-ink-100">
+                                {formatCurrencyWhole(row.household)}
+                              </td>
+                              <td className={clsx(
+                                'py-2.5 pr-3 text-right font-mono tabular-nums',
+                                change == null ? 'text-ink-400' : change >= 0 ? 'text-teal-400' : 'text-rose-400'
+                              )}>
+                                {change == null ? '—' : `${change >= 0 ? '+' : ''}${formatPercent(change)}`}
+                              </td>
+                              {hasTakeHome && (
+                                <td className="py-2.5 pr-3 text-right font-mono tabular-nums text-ink-200">
+                                  {formatCurrencyWhole(row.takeHome)}
+                                </td>
+                              )}
+                              {hasTakeHome && (
+                                <td className="py-2.5 text-right font-mono tabular-nums text-ink-200">
+                                  {rate == null ? '—' : formatPercent(rate)}
+                                </td>
+                              )}
+                            </tr>
+                          )
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+                <p className="text-2xs text-ink-400 text-center max-w-2xl mx-auto">
+                  Take-home is what the selected categories received in your tracked accounts. The gap to gross is
+                  taxes plus pre-tax deductions (401k, health, HSA), and any pay deposited somewhere you don't track.
+                </p>
+              </div>
+            )}
+          </Card>
+
+          {salaryData.length > 0 && (
+            <Card className="min-w-0">
+              <div className="flex flex-wrap items-center justify-between gap-2 mb-4">
+                <h4 className="label text-ink-200">Income History</h4>
+                <div className="flex flex-wrap items-center gap-3">
+                  {showHouseholdSalary && (
+                    <label className="flex items-center gap-1.5 text-xs text-ink-300 cursor-pointer whitespace-nowrap">
+                      <input
+                        type="checkbox"
+                        checked={showSalaryIndividuals}
+                        onChange={e => setShowSalaryIndividuals(e.target.checked)}
+                        className="accent-amber-400"
+                      />
+                      Show individuals
+                    </label>
+                  )}
+                  {hasTargets && (
+                    <SegmentedControl<'base' | 'total'>
+                      options={[{ value: 'base', label: 'Base' }, { value: 'total', label: 'Base + target bonus' }]}
+                      value={salaryView}
+                      onChange={setSalaryView}
+                    />
+                  )}
+                </div>
+              </div>
+              <div className={clsx('space-y-4 transition-opacity', isFetching && 'opacity-60')}>
+                <div style={{ height: 340 }}>
+                  <ResponsiveContainer width="100%" height="100%">
+                    <LineChart data={salaryData} margin={{ top: 8, right: 16, bottom: 0, left: 8 }}>
+                      <CartesianGrid vertical={false} stroke="rgba(255,255,255,0.04)" />
+                      {salaryYearStarts.map(label => (
+                        <ReferenceLine key={label} x={label} stroke="rgba(255,255,255,0.08)" />
+                      ))}
+                      <XAxis
+                        dataKey="label"
+                        tick={AXIS_TICK}
+                        axisLine={{ stroke: 'rgba(255,255,255,0.08)' }}
+                        tickLine={false}
+                        interval="preserveStartEnd"
+                        minTickGap={24}
+                        ticks={salaryYearTicks ? salaryYearStarts : undefined}
+                        tickFormatter={salaryYearTicks ? (v: string) => v.slice(-4) : undefined}
+                      />
+                      <YAxis
+                        tick={AXIS_TICK}
+                        axisLine={false}
+                        tickLine={false}
+                        tickFormatter={(v: number) => formatCurrencyCompact(v)}
+                        domain={salaryYAxis.domain}
+                        ticks={salaryYAxis.ticks}
+                      />
+                      <Tooltip
+                        contentStyle={TOOLTIP_STYLE}
+                        labelStyle={{ color: '#e8e6e3', marginBottom: 4 }}
+                        itemStyle={{ color: '#c8c3bb' }}
+                        formatter={(value: number, name: string) => [value == null ? '—' : `${formatCurrencyWhole(value)}/yr`, name]}
+                      />
+                      {salaryLineEarners.map(e => (
+                        <Line
+                          key={e.earner_id}
+                          dataKey={earnerKey(e.earner_id)}
+                          name={e.name}
+                          type="stepAfter"
+                          stroke={colors.get(e.earner_id)}
+                          strokeWidth={2}
+                          dot={false}
+                          activeDot={{ r: 4, fill: colors.get(e.earner_id), stroke: SURFACE_COLOR, strokeWidth: 2 }}
+                          connectNulls={false}
+                          isAnimationActive={false}
+                        />
+                      ))}
+                      {showHouseholdSalary && (
+                        <Line
+                          dataKey="household"
+                          name="Household"
+                          type="stepAfter"
+                          stroke={HOUSEHOLD_COLOR}
+                          strokeWidth={2}
+                          dot={false}
+                          activeDot={{ r: 4, fill: HOUSEHOLD_COLOR, stroke: SURFACE_COLOR, strokeWidth: 2 }}
+                          isAnimationActive={false}
+                        />
+                      )}
+                    </LineChart>
+                  </ResponsiveContainer>
+                </div>
+                <ChartLegend
+                  items={[
+                    ...salaryLineEarners.map(e => ({ label: e.name, color: colors.get(e.earner_id) ?? OVERFLOW_COLOR, kind: 'line' as const })),
+                    ...(showHouseholdSalary ? [{ label: 'Household', color: HOUSEHOLD_COLOR, kind: 'line' as const }] : []),
+                  ]}
+                />
               </div>
             </Card>
           )}
         </div>
-
-        <Card>
-          <div className="flex flex-wrap items-center justify-between gap-2 mb-4">
-            <h4 className="label text-ink-200">Gross vs. Take-Home</h4>
-            <SegmentedControl<'chart' | 'table'>
-              options={[{ value: 'chart', label: 'Chart' }, { value: 'table', label: 'Table' }]}
-              value={grossView}
-              onChange={setGrossView}
-            />
-          </div>
-          {chartData.length === 0 ? (
-            <div className="h-[220px] flex items-center justify-center text-ink-400 text-sm">
-              No income recorded in this range yet. Add a salary entry to get started.
-            </div>
-          ) : (
-            <div className={clsx('space-y-4 transition-opacity', isFetching && 'opacity-60')}>
-              {grossView === 'chart' ? (
-                <>
-                  <div style={{ height: 340 }}>
-                    <ResponsiveContainer width="100%" height="100%">
-                      <ComposedChart data={chartData} margin={{ top: 8, right: 16, bottom: 0, left: 8 }}>
-                        <CartesianGrid vertical={false} stroke="rgba(255,255,255,0.04)" />
-                        <XAxis
-                          dataKey="label"
-                          tick={AXIS_TICK}
-                          axisLine={{ stroke: 'rgba(255,255,255,0.08)' }}
-                          tickLine={false}
-                          interval="preserveStartEnd"
-                          minTickGap={16}
-                        />
-                        <YAxis tick={AXIS_TICK} axisLine={false} tickLine={false} tickFormatter={(v: number) => formatCurrencyCompact(v)} />
-                        <Tooltip
-                          cursor={{ fill: 'rgba(255,255,255,0.03)' }}
-                          content={<GrossTooltip earners={seriesEarners} colors={colors} />}
-                        />
-                        {seriesEarners.map((e, i) => (
-                          <Bar
-                            key={e.earner_id}
-                            dataKey={earnerKey(e.earner_id)}
-                            name={e.name}
-                            stackId="gross"
-                            fill={colors.get(e.earner_id)}
-                            // A surface-colored stroke leaves a gap between stacked segments.
-                            stroke={SURFACE_COLOR}
-                            strokeWidth={2}
-                            radius={i === seriesEarners.length - 1 ? [4, 4, 0, 0] : 0}
-                            barSize={barSize}
-                            isAnimationActive={false}
-                          />
-                        ))}
-                        {hasTakeHome && (
-                          <Line
-                            dataKey="takeHome"
-                            name="Take-home"
-                            type="monotone"
-                            stroke={TAKE_HOME_COLOR}
-                            strokeWidth={2}
-                            dot={showDots ? { r: 4, fill: TAKE_HOME_COLOR, stroke: SURFACE_COLOR, strokeWidth: 2 } : false}
-                            activeDot={{ r: 5, fill: TAKE_HOME_COLOR, stroke: SURFACE_COLOR, strokeWidth: 2 }}
-                            isAnimationActive={false}
-                          />
-                        )}
-                      </ComposedChart>
-                    </ResponsiveContainer>
-                  </div>
-                  <ChartLegend
-                    items={[
-                      ...seriesEarners.map(e => ({ label: `${e.name} gross`, color: colors.get(e.earner_id) ?? OVERFLOW_COLOR, kind: 'bar' as const })),
-                      ...(hasTakeHome ? [{ label: 'Take-home', color: TAKE_HOME_COLOR, kind: 'line' as const }] : []),
-                    ]}
-                  />
-                </>
-              ) : (
-                <div className="overflow-x-auto">
-                  <table className="w-full text-sm">
-                    <thead>
-                      <tr className="text-left text-2xs uppercase tracking-wider text-ink-300 border-b border-white/[0.06]">
-                        <th className="py-2 pr-3 font-medium">Year</th>
-                        {seriesEarners.length > 1 && seriesEarners.map(e => (
-                          <th key={e.earner_id} className="py-2 pr-3 font-medium text-right whitespace-nowrap">{e.name}</th>
-                        ))}
-                        <th className="py-2 pr-3 font-medium text-right whitespace-nowrap">
-                          {seriesEarners.length > 1 ? 'Household gross' : 'Gross'}
-                        </th>
-                        <th className="py-2 pr-3 font-medium text-right whitespace-nowrap">vs prior year</th>
-                        {hasTakeHome && <th className="py-2 pr-3 font-medium text-right whitespace-nowrap">Take-home</th>}
-                        {hasTakeHome && <th className="py-2 font-medium text-right whitespace-nowrap">Rate</th>}
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {[...yearRows].reverse().map(row => {
-                        const prev = yearRows[yearRows.indexOf(row) - 1]
-                        const change = !row.partial && prev && prev.household > 0
-                          ? ((row.household - prev.household) / prev.household) * 100
-                          : null
-                        const rate = row.household > 0 ? (row.takeHome / row.household) * 100 : null
-                        return (
-                          <tr key={row.key} className="border-b border-white/[0.04] last:border-0">
-                            <td className="py-2.5 pr-3 text-ink-100 whitespace-nowrap">{row.label}</td>
-                            {seriesEarners.length > 1 && seriesEarners.map(e => (
-                              <td key={e.earner_id} className="py-2.5 pr-3 text-right font-mono tabular-nums text-ink-200">
-                                {formatCurrencyWhole(row.byEarner[e.earner_id] ?? 0)}
-                              </td>
-                            ))}
-                            <td className="py-2.5 pr-3 text-right font-mono tabular-nums text-ink-100">
-                              {formatCurrencyWhole(row.household)}
-                            </td>
-                            <td className={clsx(
-                              'py-2.5 pr-3 text-right font-mono tabular-nums',
-                              change == null ? 'text-ink-400' : change >= 0 ? 'text-teal-400' : 'text-rose-400'
-                            )}>
-                              {change == null ? '—' : `${change >= 0 ? '+' : ''}${formatPercent(change)}`}
-                            </td>
-                            {hasTakeHome && (
-                              <td className="py-2.5 pr-3 text-right font-mono tabular-nums text-ink-200">
-                                {formatCurrencyWhole(row.takeHome)}
-                              </td>
-                            )}
-                            {hasTakeHome && (
-                              <td className="py-2.5 text-right font-mono tabular-nums text-ink-200">
-                                {rate == null ? '—' : formatPercent(rate)}
-                              </td>
-                            )}
-                          </tr>
-                        )
-                      })}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-              <p className="text-2xs text-ink-400 text-center max-w-2xl mx-auto">
-                Take-home is what the selected categories received in your tracked accounts. The gap to gross is
-                taxes plus pre-tax deductions (401k, health, HSA), and any pay deposited somewhere you don't track.
-              </p>
-            </div>
-          )}
-        </Card>
 
         {bonusGroups.length > 0 && (
           <Card>
@@ -904,104 +981,6 @@ export default function IncomePage() {
                 Target is the bonus % on the salary in effect on Dec 31, times that base. Annual bonuses count toward
                 the performance year they're for, wherever they were paid; gross charts above count them in the month paid.
               </p>
-            </div>
-          </Card>
-        )}
-
-        {salaryData.length > 0 && (
-          <Card>
-            <div className="flex flex-wrap items-center justify-between gap-2 mb-4">
-              <h4 className="label text-ink-200">
-                {showTotalComp ? 'Target Total Comp (Base + Target Bonus)' : 'Salary History (Annual Base)'}
-              </h4>
-              <div className="flex flex-wrap items-center gap-3">
-                {showHouseholdSalary && (
-                  <label className="flex items-center gap-1.5 text-xs text-ink-300 cursor-pointer whitespace-nowrap">
-                    <input
-                      type="checkbox"
-                      checked={showSalaryIndividuals}
-                      onChange={e => setShowSalaryIndividuals(e.target.checked)}
-                      className="accent-amber-400"
-                    />
-                    Show individuals
-                  </label>
-                )}
-                {hasTargets && (
-                  <SegmentedControl<'base' | 'total'>
-                    options={[{ value: 'base', label: 'Base' }, { value: 'total', label: 'Base + target bonus' }]}
-                    value={salaryView}
-                    onChange={setSalaryView}
-                  />
-                )}
-              </div>
-            </div>
-            <div className={clsx('space-y-4 transition-opacity', isFetching && 'opacity-60')}>
-              <div style={{ height: 280 }}>
-                <ResponsiveContainer width="100%" height="100%">
-                  <LineChart data={salaryData} margin={{ top: 8, right: 16, bottom: 0, left: 8 }}>
-                    <CartesianGrid vertical={false} stroke="rgba(255,255,255,0.04)" />
-                    {salaryYearStarts.map(label => (
-                      <ReferenceLine key={label} x={label} stroke="rgba(255,255,255,0.08)" />
-                    ))}
-                    <XAxis
-                      dataKey="label"
-                      tick={AXIS_TICK}
-                      axisLine={{ stroke: 'rgba(255,255,255,0.08)' }}
-                      tickLine={false}
-                      interval="preserveStartEnd"
-                      minTickGap={24}
-                      ticks={salaryYearTicks ? salaryYearStarts : undefined}
-                      tickFormatter={salaryYearTicks ? (v: string) => v.slice(-4) : undefined}
-                    />
-                    <YAxis
-                      tick={AXIS_TICK}
-                      axisLine={false}
-                      tickLine={false}
-                      tickFormatter={(v: number) => formatCurrencyCompact(v)}
-                      domain={salaryYAxis.domain}
-                      ticks={salaryYAxis.ticks}
-                    />
-                    <Tooltip
-                      contentStyle={TOOLTIP_STYLE}
-                      labelStyle={{ color: '#e8e6e3', marginBottom: 4 }}
-                      itemStyle={{ color: '#c8c3bb' }}
-                      formatter={(value: number, name: string) => [value == null ? '—' : `${formatCurrencyWhole(value)}/yr`, name]}
-                    />
-                    {salaryLineEarners.map(e => (
-                      <Line
-                        key={e.earner_id}
-                        dataKey={earnerKey(e.earner_id)}
-                        name={e.name}
-                        type="stepAfter"
-                        stroke={colors.get(e.earner_id)}
-                        strokeWidth={2}
-                        dot={false}
-                        activeDot={{ r: 4, fill: colors.get(e.earner_id), stroke: SURFACE_COLOR, strokeWidth: 2 }}
-                        connectNulls={false}
-                        isAnimationActive={false}
-                      />
-                    ))}
-                    {showHouseholdSalary && (
-                      <Line
-                        dataKey="household"
-                        name="Household"
-                        type="stepAfter"
-                        stroke={HOUSEHOLD_COLOR}
-                        strokeWidth={2}
-                        dot={false}
-                        activeDot={{ r: 4, fill: HOUSEHOLD_COLOR, stroke: SURFACE_COLOR, strokeWidth: 2 }}
-                        isAnimationActive={false}
-                      />
-                    )}
-                  </LineChart>
-                </ResponsiveContainer>
-              </div>
-              <ChartLegend
-                items={[
-                  ...salaryLineEarners.map(e => ({ label: e.name, color: colors.get(e.earner_id) ?? OVERFLOW_COLOR, kind: 'line' as const })),
-                  ...(showHouseholdSalary ? [{ label: 'Household', color: HOUSEHOLD_COLOR, kind: 'line' as const }] : []),
-                ]}
-              />
             </div>
           </Card>
         )}
