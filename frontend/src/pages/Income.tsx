@@ -77,6 +77,8 @@ const earnerKey = (id: number) => `e${id}`
 const round2 = (v: number) => Math.round(v * 100) / 100
 const sumSlice = (arr: number[], from: number, to: number) =>
   arr.slice(Math.max(0, from), Math.max(0, to)).reduce((a, b) => a + b, 0)
+const toggleIn = <T,>(list: T[], item: T) =>
+  list.includes(item) ? list.filter(x => x !== item) : [...list, item]
 // "15%", "12.5%": a target % as entered, without padding decimals.
 const pctLabel = (v: number) => `${Number(v.toFixed(2))}%`
 
@@ -347,7 +349,9 @@ export default function IncomePage() {
   const [bucketMode, setBucketMode] = useState<'year' | 'month'>('year')
   const [grossView, setGrossView] = useState<'chart' | 'table'>('chart')
   const [takeHomeIds, setTakeHomeIdsState] = useState<number[] | null>(loadTakeHomeIds)
-  const [personFilter, setPersonFilter] = useState<number | null>(null)
+  // Income History table filters; an empty list means no filter.
+  const [personFilter, setPersonFilter] = useState<number[]>([])
+  const [kindFilter, setKindFilter] = useState<IncomeKind[]>([])
   const [editing, setEditing] = useState<IncomeEntry | 'new' | null>(null)
   const [showPeople, setShowPeople] = useState(false)
   const [salaryView, setSalaryView] = useState<'base' | 'total'>('total')
@@ -527,7 +531,21 @@ export default function IncomePage() {
     setTakeHomeIds(Array.from(next).sort((a, b) => a - b))
   }
 
-  const visibleEntries = (entries ?? []).filter(e => personFilter == null || e.earner_id === personFilter)
+  // ── Income History filters ──
+  // Drop anyone deleted while selected so the table doesn't go blank.
+  const selectedPeople = personFilter.filter(id => earners.some(e => e.id === id))
+  const visibleEntries = (entries ?? []).filter(e =>
+    (selectedPeople.length === 0 || selectedPeople.includes(e.earner_id)) &&
+    (kindFilter.length === 0 || kindFilter.includes(e.kind))
+  )
+  const peopleLabel = selectedPeople.length === 0
+    ? 'Everyone'
+    : selectedPeople.length === 1
+      ? earners.find(e => e.id === selectedPeople[0])?.name ?? '1 person'
+      : `${selectedPeople.length} people`
+  const kindLabel = kindFilter.length === 0
+    ? 'All types'
+    : kindFilter.length === 1 ? KIND_LABELS[kindFilter[0]] : `${kindFilter.length} types`
 
   return (
     <div className="space-y-6 animate-slide-up">
@@ -988,30 +1006,50 @@ export default function IncomePage() {
         <Card>
           <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
             <h4 className="label text-ink-200">Income History</h4>
-            {earners.length > 1 && (
-              <div className="flex flex-wrap gap-1.5">
-                {[{ id: null as number | null, name: 'Everyone' }, ...earners.map(e => ({ id: e.id as number | null, name: e.name }))].map(p => (
-                  <button
-                    key={p.id ?? 'all'}
-                    type="button"
-                    onClick={() => setPersonFilter(p.id)}
-                    className={clsx(
-                      'px-2.5 py-1 rounded-full text-xs border transition-colors',
-                      personFilter === p.id
-                        ? 'border-amber-400/40 bg-amber-400/5 text-amber-300'
-                        : 'border-white/[0.08] text-ink-300 hover:text-ink-100'
-                    )}
-                  >
-                    {p.name}
-                  </button>
+            <div className="flex flex-wrap items-center gap-2">
+              {earners.length > 1 && (
+                <FilterDropdown buttonLabel={peopleLabel} isActive={selectedPeople.length > 0}>
+                  <CheckboxRow
+                    checked={selectedPeople.length === 0}
+                    label="Everyone"
+                    bold
+                    onToggle={() => setPersonFilter([])}
+                  />
+                  <div className="h-px bg-white/[0.06] my-1" />
+                  {earners.map(e => (
+                    <CheckboxRow
+                      key={e.id}
+                      checked={selectedPeople.includes(e.id)}
+                      label={e.name}
+                      onToggle={() => setPersonFilter(toggleIn(selectedPeople, e.id))}
+                    />
+                  ))}
+                </FilterDropdown>
+              )}
+              <FilterDropdown buttonLabel={kindLabel} isActive={kindFilter.length > 0}>
+                <CheckboxRow
+                  checked={kindFilter.length === 0}
+                  label="All types"
+                  bold
+                  onToggle={() => setKindFilter([])}
+                />
+                <div className="h-px bg-white/[0.06] my-1" />
+                {(Object.keys(KIND_LABELS) as IncomeKind[]).map(k => (
+                  <CheckboxRow
+                    key={k}
+                    checked={kindFilter.includes(k)}
+                    label={KIND_LABELS[k]}
+                    onToggle={() => setKindFilter(toggleIn(kindFilter, k))}
+                  />
                 ))}
-              </div>
-            )}
+              </FilterDropdown>
+            </div>
           </div>
           {visibleEntries.length === 0 ? (
             <p className="text-xs text-ink-400 py-4">
-              No income entries yet. Add each person's salary (and every raise or job change after it) with
-              "Add entry".
+              {entries?.length
+                ? 'No entries match these filters.'
+                : 'No income entries yet. Add each person\'s salary (and every raise or job change after it) with "Add entry".'}
             </p>
           ) : (
             <div className="overflow-x-auto">
@@ -1081,7 +1119,7 @@ export default function IncomePage() {
           entry={editing === 'new' ? null : editing}
           earners={earners}
           entries={entries ?? []}
-          defaultEarnerId={personFilter ?? earners[0].id}
+          defaultEarnerId={selectedPeople.length === 1 ? selectedPeople[0] : earners[0].id}
           onClose={() => setEditing(null)}
         />
       )}
